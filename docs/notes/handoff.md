@@ -1,6 +1,6 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
-## Agent handoff / active work (2026-11-19, latest)
+## Agent handoff / active work (2026-11-19, latest; session 15 ended ~03:00 WIB)
 
 ### >>> HANDOFF 2026-11-19 (session 15): clean local build, probe66 <<<
 
@@ -90,6 +90,30 @@ GPU firmware, `sweetbattery=0`, CA software renderer, CPU present). Rate is soft
 **Hands-free cycle (no button presses):** `fastboot boot IMG`; `sweetreboot=300` resets into
 OrangeFox recovery; wait ~30 s after adb shows `recovery` before `skyios log-pull` /
 `shot-pull` (by-name links appear late); `adb reboot bootloader`.
+
+**GPU (Metal) path for backboardd: bugs fixed this session (all committed):**
+1. ef10d29 surface-less RGBA8 textures get IOSurfaces; replaceRegion/getBytes/blit copy implemented.
+2. dad34c7 INDEX_SIZE: 16-bit indices were sent as 8-bit.
+3. 0147e03 **CP_LOAD_STATE6 sampler/texture headers**: count was put in STATE_TYPE -> header
+   0x00528000 (the old "FAR 0x528000"), CP fault + hang, engine dead. Now matches cp3d.rs.
+4. d4c50e7 bound buffers/textures/index buffers are retained by the command buffer (Metal semantics).
+5. dfe0977 buffer-backed textures retain their MTLBuffer; non-RGBA8 buffer textures not sampled.
+6. f17123d user-open wait spins on CNTVCT (delay(100 ms) never returned in probe75).
+Debug aids: kernel logs `ib1/ib2 base+rem` on a present timeout and `user unmap` events; the bundle
+dumps user IBs 48-64 (`IB seq iova+off: words`).
+
+**Current GPU blocker (probe78/79, no SMMU fault):** CP hangs at fence 56->57, status 0x00d70585,
+ib1 rem 1782 in IB 57 (2345 dwords, 4 indexed draws, first pass renders to the 1125x2436 surface
+at 0xc0018000, later passes to 64x64 targets). IB 49/51 with the same kind of draws completed.
+IB 55 was lost (UDP). Not yet known what stalls; the prefetch position is near the first draw (dword 578).
+Bisect probe80 (refusing to render into texture-owned surfaces) made backboardd stall: inconclusive, reverted.
+Next ideas: dump IB 55 (it ran just before), check CCU/blit state left by the earlier pass, try
+`CP_SET_DRAW_STATE`/WFI between passes, compare against freedreno's sysmem pass setup.
+
+**Images:**
+- `skyios-shim/out/shim-boot-skyios-daily.img` = kernel k77 + latest bundle, software CA, battery off,
+  NO auto-reboot/sims: for normal use (`fastboot boot`).
+- `skyios-shim/out/shim-boot-probe81.img` = same + `sweetreboot=300`, power/unlock sims and shots (verification).
 
 **WLAN:** the thread logs the crypto self-test, then stops before `SMMU identity for SID`
 (hangs in Mmio::map / apps-SMMU SMR writes in `radio_init_heap`). Even past that, WCN3990
