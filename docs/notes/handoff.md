@@ -1,6 +1,35 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
-## Agent handoff / active work (2026-11-18, latest)
+## Agent handoff / active work (2026-11-19, latest)
+
+### >>> HANDOFF 2026-11-19 (session 15): clean local build, probe66 <<<
+
+**Probes 54-65 are unreliable** (previous session, not recorded here before):
+they were built with incremental local builds in `research/localbuild/dxb`,
+and `touch` does not trigger recompiles. By that session's own finding,
+probes 54-61 ran an unchanged kernel. The source tree there also has
+uncommitted debug hacks (RGB fill, CPU-only copy). Its SWEETLOG reads were
+stale (wrong offset/old data), so none of their "results" count.
+
+**CI run 44316130996 (8f1d13f, 0067 `_cnputc` mute)** first failed because
+the runner never started (GitHub capacity, not a patch error). It was re-run.
+
+**Clean local build flow (mirrors `.github/workflows/xnu.yml`):**
+1. `git clone research/localbuild/dxb research/localbuild/ci-clean`, checkout DXB_SHA 663906528d
+2. copy `xnu/patches/*.patch *.sh` into `ci-clean/patches/`, apply the same `ARCHS` sed as CI
+3. `SWEET_RUST_LIB=<skyios-kernel/build.sh output> MACOS_VERSION=13.5 KERNEL_CONFIG=DEVELOPMENT MACHINE_CONFIG=SWEET MAKEFLAGS=-k bash build.sh` (~25 min)
+4. Only the 4 expected upstream patches are skipped; `sweet_console_muted` is checked in `_cnputc`
+5. `xcrun strip -x`, then `target/release/skyios mkpayload KERNEL skyios-shim/out/sweet-0081hi.adt OUT --cmdline "<probe53 cmdline>" --ramdisk dtb/boot_unpacked/ramdisk`, then `skyios-shim/build.sh`
+
+`sweet-0081hi.adt` has NO embedded boot-args (checked with strings), so the
+"stale ADT args" theory below is wrong. Stale args came from elsewhere (NVRAM?).
+
+**probe66** = clean local build of HEAD 8f1d13f with probe53's cmdline + ADT.
+Booted 2026-11-19 00:0x. Result: (pending)
+
+**User goal now:** visible lock screen at 60fps + WiFi working.
+
+### Older (2026-11-18)
 
 ### >>> HANDOFF 2026-11-18 (session 11): SMMU stall-on-fault fix, probe49 built <<<
 
