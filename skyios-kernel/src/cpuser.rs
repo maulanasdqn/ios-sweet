@@ -295,6 +295,25 @@ impl Engine {
     }
 }
 
+/// Busy-wait `us` microseconds on the ARM generic timer (no scheduler, no
+/// timer interrupt involved).
+fn spin_us(us: u64) {
+    let (freq, start): (u64, u64);
+    unsafe {
+        core::arch::asm!("mrs {}, cntfrq_el0", out(reg) freq);
+        core::arch::asm!("isb", "mrs {}, cntvct_el0", out(reg) start);
+    }
+    let ticks = freq / 1_000_000 * us;
+    loop {
+        let now: u64;
+        unsafe { core::arch::asm!("isb", "mrs {}, cntvct_el0", out(reg) now) };
+        if now.wrapping_sub(start) >= ticks {
+            return;
+        }
+        core::hint::spin_loop();
+    }
+}
+
 fn locked<T>(f: impl FnOnce(&mut Engine) -> T, fail: T) -> T {
     use core::sync::atomic::Ordering;
     while BUSY.swap(true, Ordering::Acquire) {
@@ -320,7 +339,9 @@ pub extern "C" fn sweet_rs_gpu_user_open() -> bool {
     if !super::ENGINE_READY.load(Ordering::Acquire) {
         crate::log!("SWEET CP: user open: waiting for engine init");
         for _ in 0..300 {
-            delay_us(100_000);
+            // spin on the generic timer: delay() of 100 ms never returned here
+            // (probe75, backboardd blocked for good)
+            spin_us(100_000);
             if super::ENGINE_READY.load(Ordering::Acquire) {
                 break;
             }
