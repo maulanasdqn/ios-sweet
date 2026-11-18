@@ -110,6 +110,13 @@ Bisect probe80 (refusing to render into texture-owned surfaces) made backboardd 
 Next ideas: dump IB 55 (it ran just before), check CCU/blit state left by the earlier pass, try
 `CP_SET_DRAW_STATE`/WFI between passes, compare against freedreno's sysmem pass setup.
 
+**Console text race (observed):** the SAME image (probe81) once showed console text at 120-210 s
+while backboardd presented ~10 swaps/s (CA showing its snapshot of the panel = console text), and
+on a re-run (probe81b) showed the lock screen (120 s) and home screen (180 s). Fix (commit 44b86f5,
+not yet booted): 0067b mutes `vcputc_options` itself; 0116 mutes + clears the panel when backboardd
+asks for the layer default surface (before CA snapshots it). Clean build of these in
+`research/localbuild/ci-clean2` (same flow as ci-clean).
+
 **Images:**
 - `skyios-shim/out/shim-boot-skyios-daily.img` = kernel k77 + latest bundle, software CA, battery off,
   NO auto-reboot/sims: for normal use (`fastboot boot`).
