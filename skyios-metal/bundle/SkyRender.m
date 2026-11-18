@@ -357,6 +357,21 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
     if (_rtSurf) CFRelease(_rtSurf);
 }
 
+// Metal keeps every resource a command buffer uses alive until it completes;
+// CA releases buffers right after encoding, and freeing one unmaps it while
+// the GPU has yet to run the draw (SMMU fault on a just-freed IOVA)
+- (void)keep:(id)o {
+    if (!o)
+        return;
+    static const char key;
+    NSMutableSet *all = objc_getAssociatedObject(_owner, &key);
+    if (!all) {
+        all = [NSMutableSet set];
+        objc_setAssociatedObject(_owner, &key, all, OBJC_ASSOCIATION_RETAIN);
+    }
+    [all addObject:o];
+}
+
 - (uint64_t)upload:(const void *)p length:(NSUInteger)len {
     static const char key;
     NSMutableArray<SkyUpload *> *all = objc_getAssociatedObject(_owner, &key);
@@ -401,6 +416,7 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
 }
 
 - (void)setVertexBuffer:(id<MTLBuffer>)b offset:(NSUInteger)o atIndex:(NSUInteger)i {
+    [self keep:b];
     uint64_t base = b.gpuAddress;
     if (i < 32) {
         _vtx_base[i] = base;
@@ -604,6 +620,7 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
 - (void)drawIndexedPrimitives:(MTLPrimitiveType)t indexCount:(NSUInteger)indexCount indexType:(MTLIndexType)indexType indexBuffer:(id<MTLBuffer>)indexBuffer indexBufferOffset:(NSUInteger)indexBufferOffset instanceCount:(NSUInteger)instanceCount {
     if (instanceCount != 1)
         return;
+    [self keep:indexBuffer];
     uint32_t prim = (t == MTLPrimitiveTypeTriangleStrip) ? 6 : 4;
     // INDEX_SIZE (a4xx_index_size): 0 = 8 bit, 1 = 16 bit, 2 = 32 bit
     uint32_t idxSize = (indexType == MTLIndexTypeUInt32) ? 2 : 1;
@@ -798,6 +815,7 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
 - (void)setTriangleFillMode:(MTLTriangleFillMode)m {}
 - (void)setDepthStencilState:(id<MTLDepthStencilState>)s {}
 - (void)setFragmentBuffer:(id<MTLBuffer>)b offset:(NSUInteger)o atIndex:(NSUInteger)i {
+    [self keep:b];
     if (i < 8) {
         _frag_base[i] = b.gpuAddress;
         _frag_gpu[i] = b.gpuAddress + o;
@@ -822,6 +840,7 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
 }
 - (void)setFragmentTexture:(id<MTLTexture>)t atIndex:(NSUInteger)i {
     static int tlog; if (tlog++ < 8) sky_log("setFragmentTexture idx=%lu tex=%p fmt=%lu", (unsigned long)i, t, t ? (unsigned long)t.pixelFormat : 0);
+    [self keep:t];
     if (t) _tex = t;
 }
 
