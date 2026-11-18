@@ -118,9 +118,12 @@ asks for the layer default surface (before CA snapshots it). Clean build of thes
 `research/localbuild/ci-clean2` (same flow as ci-clean).
 
 **Images:**
-- `skyios-shim/out/shim-boot-skyios-daily.img` = kernel k77 + latest bundle, software CA, battery off,
-  NO auto-reboot/sims: for normal use (`fastboot boot`).
-- `skyios-shim/out/shim-boot-probe81.img` = same + `sweetreboot=300`, power/unlock sims and shots (verification).
+- `skyios-shim/out/shim-boot-skyios-daily.img` = kernel from `research/localbuild/ci-clean2` (all
+  patches incl. 0067b/0116, GPU firmware) + latest bundle, software CA, battery off, NO
+  auto-reboot/sims: for normal use (`fastboot boot`). Booted at ~03:35 WIB 2026-11-19 and left running.
+- `skyios-shim/out/shim-boot-probe82.img` = same kernel + `sweetreboot=300`, power/unlock sims and
+  shots. Booted twice: **82a lock screen (120 s) + home screen (180 s); 82b lock screen at all 4 shots**
+  (the unlock sim did not land); no console text in either -> 0116 fixes the race (observed 2/2).
 
 **WLAN:** the thread logs the crypto self-test, then stops before `SMMU identity for SID`
 (hangs in Mmio::map / apps-SMMU SMR writes in `radio_init_heap`). Even past that, WCN3990
