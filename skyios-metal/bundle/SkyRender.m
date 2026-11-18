@@ -561,12 +561,12 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
         uint32_t tex_count = fbfetch_prog ? 2 : 1;
         uint64_t samp = desc + (fbfetch_prog ? 128 : 64);
         emit(s, pkt7(0x34, 3)); // samplers
-        emit(s, (tex_count << 14) | (2 << 16) | (4 << 18) | (1 << 22));
+        emit(s, (2 << 16) | (4 << 18) | (tex_count << 22)); // ST6_SHADER, SB6_FS_TEX, NUM_UNIT
         emit(s, (uint32_t)samp);
         emit(s, (uint32_t)(samp >> 32));
         reg64(s, 0xa9e0, samp);  // SP_PS_SAMPLER_BASE
         emit(s, pkt7(0x34, 3)); // textures: ST6_CONSTANTS, SB6_FS_TEX
-        emit(s, (tex_count << 14) | (2 << 16) | (4 << 18) | (1 << 22));
+        emit(s, (1 << 14) | (2 << 16) | (4 << 18) | (tex_count << 22)); // ST6_CONSTANTS, SB6_FS_TEX, NUM_UNIT
         emit(s, (uint32_t)desc);
         emit(s, (uint32_t)(desc >> 32));
         reg64(s, 0xa9e4, desc);  // SP_PS_TEXMEMOBJ_BASE
@@ -725,11 +725,11 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
         uint32_t tex_count = fbfetch_prog ? 2 : 1;
         uint64_t samp = desc + (fbfetch_prog ? 128 : 64);
         emit(s, pkt7(0x34, 3)); // samplers
-        emit(s, (tex_count << 14) | (2 << 16) | (4 << 18) | (1 << 22));
+        emit(s, (2 << 16) | (4 << 18) | (tex_count << 22)); // ST6_SHADER, SB6_FS_TEX, NUM_UNIT
         emit(s, (uint32_t)samp); emit(s, (uint32_t)(samp >> 32));
         reg64(s, 0xa9e0, samp);
         emit(s, pkt7(0x34, 3)); // textures
-        emit(s, (tex_count << 14) | (2 << 16) | (4 << 18) | (1 << 22));
+        emit(s, (1 << 14) | (2 << 16) | (4 << 18) | (tex_count << 22)); // ST6_CONSTANTS, SB6_FS_TEX, NUM_UNIT
         emit(s, (uint32_t)desc); emit(s, (uint32_t)(desc >> 32));
         reg64(s, 0xa9e4, desc);
         reg1(s, 0xa9a7, tex_count);

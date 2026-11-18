@@ -479,6 +479,18 @@ static uint32_t pkt7(uint32_t op, uint32_t cnt) {
         return;
     }
     _seq = seq;
+    // debug: dump early IBs so a CP hang (kernel logs ib1 base/rem) can be
+    // matched to the packet it stopped in
+    if (seq >= 8 && seq <= 20) {
+        const uint32_t *w = (const uint32_t *)_s->data.bytes;
+        for (uint32_t i = 0; i < dw; i += 8) {
+            char line[160];
+            int o = snprintf(line, sizeof(line), "IB %llu %#llx+%04x:", seq, _ib.iova, i * 4);
+            for (uint32_t j = i; j < i + 8 && j < dw && o < (int)sizeof(line) - 10; j++)
+                o += snprintf(line + o, sizeof(line) - o, " %08x", w[j]);
+            sky_log("%s", line);
+        }
+    }
     _status = MTLCommandBufferStatusScheduled;
     for (MTLCommandBufferHandler h in _scheduled)
         h(self);

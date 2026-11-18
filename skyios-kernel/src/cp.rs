@@ -530,6 +530,14 @@ fn wait_fence(gpu: &Gpu, mem: &GpuMem, wptr: u32, seq: u32) -> bool {
         gpu.read(RBBM_STATUS),
         gpu.read(RBBM_INT_0_STATUS)
     );
+    // where the CP stopped inside the indirect buffers (a6xx.xml CP_IB1/IB2)
+    crate::log!(
+        "SWEET CP: ib1 {:#x} rem {} ib2 {:#x} rem {}",
+        (gpu.read(0x929) as u64) << 32 | gpu.read(0x928) as u64,
+        gpu.read(0x92a),
+        (gpu.read(0x92c) as u64) << 32 | gpu.read(0x92b) as u64,
+        gpu.read(0x92d)
+    );
     smmu_fault();
     false
 }
