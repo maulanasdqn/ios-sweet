@@ -859,6 +859,14 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
     }
     if ([_tex respondsToSelector:@selector(skyBufGpu)]) {
         uint64_t bg = ((uint64_t (*)(id, SEL))objc_msgSend)(_tex, @selector(skyBufGpu));
+        MTLPixelFormat bf = _tex.pixelFormat;
+        // the descriptor is RGBA8 only: an A8/RG8 buffer read as RGBA8 runs
+        // past the rows (and the buffer)
+        if (bg && bf != MTLPixelFormatBGRA8Unorm && bf != MTLPixelFormatBGRA8Unorm_sRGB &&
+            bf != MTLPixelFormatRGBA8Unorm && bf != MTLPixelFormatRGBA8Unorm_sRGB) {
+            static int nlf; if (nlf++ < 3) sky_log("texGpu: buf fmt %lu not RGBA8, skipped", (unsigned long)bf);
+            return NO;
+        }
         if (bg) {
             NSUInteger off = ((NSUInteger (*)(id, SEL))objc_msgSend)(_tex, @selector(skyBufOff));
             NSUInteger bpr = ((NSUInteger (*)(id, SEL))objc_msgSend)(_tex, @selector(skyBufBpr));

@@ -273,6 +273,7 @@ static IOSurfaceRef sky_tex_surface(MTLTextureDescriptor *d) {
     NSUInteger _plane;
     uint64_t _bufGpu;
     NSUInteger _bufOff, _bufBpr;
+    id<MTLBuffer> _parent; // a texture made from a buffer keeps it alive, as in Metal
 }
 - (instancetype)initWithDevice:(id<MTLDevice>)dev descriptor:(MTLTextureDescriptor *)d surface:(IOSurfaceRef)s plane:(NSUInteger)plane {
     if ((self = [super init])) {
@@ -302,7 +303,12 @@ static IOSurfaceRef sky_tex_surface(MTLTextureDescriptor *d) {
 - (uint64_t)skyBufGpu { return _bufGpu; }
 - (NSUInteger)skyBufOff { return _bufOff; }
 - (NSUInteger)skyBufBpr { return _bufBpr; }
-- (void)setSkyBufGpu:(uint64_t)g off:(NSUInteger)o bpr:(NSUInteger)b { _bufGpu = g; _bufOff = o; _bufBpr = b; }
+- (void)setSkyBuf:(id<MTLBuffer>)buf off:(NSUInteger)o bpr:(NSUInteger)b {
+    _parent = buf;
+    _bufGpu = buf.gpuAddress;
+    _bufOff = o;
+    _bufBpr = b;
+}
 - (BOOL)isFramebufferOnly { return NO; }
 - (BOOL)isShareable { return NO; }
 - (BOOL)allowGPUOptimizedContents { return NO; }
@@ -356,15 +362,15 @@ static BOOL sky_tex_rows(SkyTexture *t, IOSurfaceRef s, MTLRegion r, NSUInteger 
     if (s == 0)
         [self getBytes:b bytesPerRow:bpr fromRegion:r mipmapLevel:l];
 }
-- (id<MTLBuffer>)buffer { return nil; }
-- (NSUInteger)bufferOffset { return 0; }
-- (NSUInteger)bufferBytesPerRow { return 0; }
+- (id<MTLBuffer>)buffer { return _parent; }
+- (NSUInteger)bufferOffset { return _bufOff; }
+- (NSUInteger)bufferBytesPerRow { return _bufBpr; }
 - (NSUInteger)protectionOptions { return 0; }
 @end
 
-id sky_texture_from_buffer(id<MTLDevice> dev, MTLTextureDescriptor *d, uint64_t gpu, NSUInteger off, NSUInteger bpr) {
+id sky_texture_from_buffer(id<MTLDevice> dev, MTLTextureDescriptor *d, id<MTLBuffer> buf, NSUInteger off, NSUInteger bpr) {
     SkyTexture *t = [[SkyTexture alloc] initWithDevice:dev descriptor:d surface:NULL plane:0];
-    [t setSkyBufGpu:gpu off:off bpr:bpr];
+    [t setSkyBuf:buf off:off bpr:bpr];
     return t;
 }
 

@@ -121,8 +121,8 @@ static CFTimeInterval sky_now(void) {
     return [self newTextureWithDescriptor:d offset:o bytesPerRow:bpr bytesPerImage:0];
 }
 - (id<MTLTexture>)newTextureWithDescriptor:(MTLTextureDescriptor *)d offset:(NSUInteger)o bytesPerRow:(NSUInteger)bpr bytesPerImage:(NSUInteger)bpi {
-    extern id sky_texture_from_buffer(id<MTLDevice>, MTLTextureDescriptor *, uint64_t gpu, NSUInteger off, NSUInteger bpr);
-    return sky_texture_from_buffer(_device, d, _mem.iova, o, bpr);
+    extern id sky_texture_from_buffer(id<MTLDevice>, MTLTextureDescriptor *, id<MTLBuffer> buf, NSUInteger off, NSUInteger bpr);
+    return sky_texture_from_buffer(_device, d, self, o, bpr);
 }
 - (id<MTLTexture>)newLinearTextureWithDescriptor:(MTLTextureDescriptor *)d offset:(NSUInteger)o bytesPerRow:(NSUInteger)bpr bytesPerImage:(NSUInteger)bpi {
     return [self newTextureWithDescriptor:d offset:o bytesPerRow:bpr bytesPerImage:bpi];

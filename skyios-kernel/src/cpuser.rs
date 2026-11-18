@@ -238,6 +238,7 @@ impl Engine {
         }
         u.pt.clean(first, n);
         tlb_flush(&self.smmu);
+        crate::log!("SWEET CP: user unmap {:#x} bytes at iova {:#x} (after fence {})", bytes, iova, self.fseq);
         true
     }
 
