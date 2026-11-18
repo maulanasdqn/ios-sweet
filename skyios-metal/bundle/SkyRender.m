@@ -605,7 +605,8 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
     if (instanceCount != 1)
         return;
     uint32_t prim = (t == MTLPrimitiveTypeTriangleStrip) ? 6 : 4;
-    uint32_t idxSize = (indexType == MTLIndexTypeUInt32) ? 1 : 0;
+    // INDEX_SIZE (a4xx_index_size): 0 = 8 bit, 1 = 16 bit, 2 = 32 bit
+    uint32_t idxSize = (indexType == MTLIndexTypeUInt32) ? 2 : 1;
     // SOURCE_SELECT=0 (DMA/indexed), VIS_CULL=1 (USE_VISIBILITY), INDEX_SIZE
     uint32_t initiator = prim | (0 << 6) | (1 << 8) | (idxSize << 10);
 
