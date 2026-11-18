@@ -61,6 +61,27 @@ to a file named `--timeout`; it was moved to logs/live-usbnet-nov18.txt.
 **Hands-free cycle:** `sweetreboot=300` resets with the IMEM bootloader reason; then boot
 recovery/recovery.img, `skyios log-pull`, `skyios shot-pull`, `adb reboot bootloader`.
 
+**probe69/70 (Metal bundle via tool container, commit ef10d29):** surface-less
+RGBA8 textures now get IOSurfaces. Imports work until the GPU engine dies:
+user submit seq 15 -> `SMMU fault far 0x528000 fsr 0x402`, CP hangs (status
+0x00800005), `idle failed ... GPU present disabled`, engine `dead`. After that every
+`sweet_rs_gpu_user_map` returns 0 -> import `0xe00002db` (kIOReturnNoSpace).
+**The black GPU-rendered frame is caused by this hang, not by the IOVA space** (33 of 128 MiB used).
+seq 15 held one prog=4 draw (ca_fixed solid, MVP). Source of 0x528000 is unknown (all
+user buffer addresses come from iova). Also fixed: INDEX_SIZE (16-bit indices were sent
+as 8-bit, commit dad34c7). Not yet booted with that fix.
+
+**Deploying the Metal bundle:** `skyios-metal/bundle/build.sh OUT`, then
+`skyios mktool tool.bin /System/Library/Extensions/SkyAdrenoMetal.bundle/ .../_CodeSignature/ B/SkyAdrenoMetal=D/SkyAdrenoMetal B/Info.plist=D/Info.plist B/_CodeSignature/CodeResources=D/_CodeSignature/CodeResources`,
+and pass it as `mkpayload --ramdisk tool.bin` (installed after root mount, overwrites; persists on disk).
+`dtb/boot_unpacked/ramdisk` is just the old Android ramdisk (no tools).
+
+**probe71** (`sweetmetal_procs=skyios-accel-test`, so CA uses its software renderer): swaps
+7/s then idle, but the 150-210 s screenshots are black. The display goes on/off (auto-lock).
+Boot 0113t (Nov 16) DID capture the home screen with `sweetpowersim=110
+sweetpowersim_every=20 sweetunlocksim=200 sweetshot=120 sweetshot_every=55`.
+**probe72** = probe71 + that recipe, sweetwifi removed. Result: (pending)
+
 **WLAN:** the thread logs the crypto self-test, then stops before `SMMU identity for SID`
 (hangs in Mmio::map / apps-SMMU SMR writes in `radio_init_heap`). Even past that, WCN3990
 firmware is loaded by the modem's WLFW QMI service (QRTR over GLINK/SMEM), and there is
