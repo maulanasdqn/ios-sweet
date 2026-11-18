@@ -1,0 +1,27 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -793,10 +793,22 @@
+ 	uint32_t outCount = 0;
+ 
+ 	switch (selector) {
+-	case kSweetFBGetLayerDefaultSurface:
++	case kSweetFBGetLayerDefaultSurface: {
++		/* CoreAnimation snapshots the default surface (the panel) for its
++		 * first frames; with sweetfb_noconsole, stop the console and clear
++		 * the panel before handing it out, so no boot text is kept in them */
++		int quiet = 0;
++		if (!sweet_console_muted &&
++		    PE_parse_boot_argn("sweetfb_noconsole", &quiet, sizeof(quiet)) && quiet != 0) {
++			sweet_console_muted = 1;
++			memset((void *)fFB->fPixels, 0, (size_t)fFB->fHeight * fFB->fRowBytes);
++			__builtin_arm_dsb(0xf);
++			IOLog("SWEET FB: console muted, panel cleared for the default surface\n");
++		}
+ 		out[0] = sweet_surface_port_in_task(fFB->fSurface, fTask);
+ 		outCount = 1;
+ 		break;
++	}
+ 	case kSweetFBSwapBegin:
+ 		IOLockLock(fFB->fLock);
+ 		out[0] = ++fFB->fSwapID;
