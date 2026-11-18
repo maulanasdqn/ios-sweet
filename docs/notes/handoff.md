@@ -25,7 +25,21 @@ the runner never started (GitHub capacity, not a patch error). It was re-run.
 "stale ADT args" theory below is wrong. Stale args came from elsewhere (NVRAM?).
 
 **probe66** = clean local build of HEAD 8f1d13f with probe53's cmdline + ADT.
-Booted 2026-11-19 00:0x. Result: (pending)
+Booted 2026-11-19 00:0x. Result: console text only, no SWEETLOG or screenshot written
+(log-pull still returns probe53's 301208-byte / flush #11 data; the 4 shot slots
+are blank and stale, from an old sweetshot=90 boot).
+
+**Root cause of "console text" since probe54 (observation from the user's photo):**
+the console wraps, so the newest lines are at the TOP. The last printed line is
+`SWEET ACCEL: SkyAdrenoMetalAccel (IOAcceleratorES) registered`. In the good
+probe53 log the next line is from the battery driver. Re-booting the old
+probe53 image now stalls at the SAME line, so this is phone state, not the kernel.
+The kernel never reaches sweet_ufs_init, so there is no root mount, GUI or log.
+Guess (unconfirmed): `SweetBattery::start` -> `sweet_i2c1_init()` (topaz QUP0
+SE1 I2C) hangs on an unclocked register read, possibly after an OrangeFox/Linux boot.
+`userdata` = journaled HFSX at partition offset 1024 (unmounted bit clear = dirty).
+
+**probe67** = probe66 kernel + `sweetbattery=0` (skips i2c1 init and SPMI). Result: (pending)
 
 **User goal now:** visible lock screen at 60fps + WiFi working.
 
