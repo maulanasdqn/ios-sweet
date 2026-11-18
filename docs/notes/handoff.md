@@ -80,7 +80,16 @@ and pass it as `mkpayload --ramdisk tool.bin` (installed after root mount, overw
 7/s then idle, but the 150-210 s screenshots are black. The display goes on/off (auto-lock).
 Boot 0113t (Nov 16) DID capture the home screen with `sweetpowersim=110
 sweetpowersim_every=20 sweetunlocksim=200 sweetshot=120 sweetshot_every=55`.
-**probe72** = probe71 + that recipe, sweetwifi removed. Result: (pending)
+**probe72** = probe71 + that recipe, sweetwifi removed. **Result (observed, screenshots):
+LOCK SCREEN at 120 s (`logs/shot-probe72-0.png`), HOME SCREEN after the unlock sim at
+180 s (`logs/shot-probe72-2.png`).** Earlier black shots were the auto-locked display.
+**Working image: `skyios-shim/out/shim-boot-probe72.img`** (kernel k68 = clean build +
+GPU firmware, `sweetbattery=0`, CA software renderer, CPU present). Rate is software-bound
+(~6-7 swaps/s when animating), so 60 fps needs the Metal path (GPU hang above).
+
+**Hands-free cycle (no button presses):** `fastboot boot IMG`; `sweetreboot=300` resets into
+OrangeFox recovery; wait ~30 s after adb shows `recovery` before `skyios log-pull` /
+`shot-pull` (by-name links appear late); `adb reboot bootloader`.
 
 **WLAN:** the thread logs the crypto self-test, then stops before `SMMU identity for SID`
 (hangs in Mmio::map / apps-SMMU SMR writes in `radio_init_heap`). Even past that, WCN3990
