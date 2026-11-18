@@ -39,7 +39,32 @@ Guess (unconfirmed): `SweetBattery::start` -> `sweet_i2c1_init()` (topaz QUP0
 SE1 I2C) hangs on an unclocked register read, possibly after an OrangeFox/Linux boot.
 `userdata` = journaled HFSX at partition offset 1024 (unmounted bit clear = dirty).
 
-**probe67** = probe66 kernel + `sweetbattery=0` (skips i2c1 init and SPMI). Result: (pending)
+**probe67** = probe66 kernel + `sweetbattery=0` (skips i2c1 init and SPMI). Result:
+boots fully into userspace (launchd, SpringBoard, backboardd) -> **the battery
+start (topaz `sweet_i2c1_init`) is what hangs the boot**. But the log says
+`SWEET GPU: no usable GMU firmware in this kernel (0 bytes)`, and backboardd sits
+idle. **CI kernels never carry GPU firmware.** probe51 was a LOCAL build with fw,
+not a CI kernel as stated below.
+
+**Firmware must be embedded when building the Rust lib** (files in research/gpu-fw, kept out of git):
+`F=$PWD/research/gpu-fw; SWEET_GMU_FW=$F/a618_gmu.bin SWEET_SQE_FW=$F/a630_sqe.fw SWEET_ZAP_MDT=$F/a615_zap.mdt SWEET_ZAP_B02=$F/a615_zap.b02 TOOLCHAIN=nightly-2026-07-28 skyios-kernel/build.sh`
+Then relink only: run line 3579661 of `research/localbuild/ci-clean/build.log` (the clang++ link)
+from `ci-clean/build/xnu.obj/DEVELOPMENT_ARM64_SWEET`, then `xcrun strip -x kernel.development.sweet.unstripped`.
+
+**probe68** = probe67 + GPU firmware. GMU stages A-D OK, SQE 0x19a loaded,
+backboardd swaps 1125x2436 surfaces and they are presented (one GPU present timed out,
+"CPU copy from now on"; CPU copy ~2 ms/frame). The sweetshot at 180 s was written.
+
+**Live log:** `target/release/skyios usbnet logs/live-NAME.txt` (sets up en8 192.168.7.1 + udp/5140).
+An old `skyios usbnet --timeout 180 ...` (the tool takes only LOGFILE) had been writing
+to a file named `--timeout`; it was moved to logs/live-usbnet-nov18.txt.
+**Hands-free cycle:** `sweetreboot=300` resets with the IMEM bootloader reason; then boot
+recovery/recovery.img, `skyios log-pull`, `skyios shot-pull`, `adb reboot bootloader`.
+
+**WLAN:** the thread logs the crypto self-test, then stops before `SMMU identity for SID`
+(hangs in Mmio::map / apps-SMMU SMR writes in `radio_init_heap`). Even past that, WCN3990
+firmware is loaded by the modem's WLFW QMI service (QRTR over GLINK/SMEM), and there is
+no modem (MSS PIL) bring-up yet. WiFi needs that subsystem first.
 
 **User goal now:** visible lock screen at 60fps + WiFi working.
 
