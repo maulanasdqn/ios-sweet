@@ -250,10 +250,16 @@ static BOOL import_surface(IOSurfaceRef s, SkyImport *out) {
     if (!d) {
         uint64_t in = sid, o[4];
         uint32_t n = 4;
-        if (IOConnectCallScalarMethod(sky_conn, SKY_IMPORT, &in, 1, o, &n) == KERN_SUCCESS) {
+        kern_return_t kr = IOConnectCallScalarMethod(sky_conn, SKY_IMPORT, &in, 1, o, &n);
+        if (kr == KERN_SUCCESS) {
             SkyImport im = {o[0], o[1], o[2], o[3]};
             d = [NSData dataWithBytes:&im length:sizeof(im)];
             cache[@(sid)] = d;
+        } else {
+            static int nfail;
+            if (nfail++ < 20)
+                sky_log("import surface %u %zux%zu bpr %zu failed: %#x (%lu imported)", sid, IOSurfaceGetWidth(s),
+                        IOSurfaceGetHeight(s), IOSurfaceGetBytesPerRow(s), kr, (unsigned long)cache.count);
         }
     }
     os_unfair_lock_unlock(&lock);

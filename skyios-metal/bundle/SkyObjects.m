@@ -345,7 +345,27 @@ static uint32_t pkt7(uint32_t op, uint32_t cnt) {
            sourceOrigin:(MTLOrigin)so sourceSize:(MTLSize)sz
               toTexture:(id<MTLTexture>)dst destinationSlice:(NSUInteger)ds destinationLevel:(NSUInteger)dl
       destinationOrigin:(MTLOrigin)dsto {
-    sky_log_once(@"blit copyFromTexture stub (no-op)");
+    // IOSurface-backed 4-byte textures, level 0: done on the CPU at encode
+    // time (ordering not kept), like the unaligned fillBuffer case
+    IOSurfaceRef s = [(id)src respondsToSelector:@selector(iosurface)] ? src.iosurface : NULL;
+    IOSurfaceRef d = [(id)dst respondsToSelector:@selector(iosurface)] ? dst.iosurface : NULL;
+    if (!s || !d || sl || dl || ss || ds || IOSurfaceGetBytesPerElement(s) != 4 || IOSurfaceGetBytesPerElement(d) != 4 ||
+        so.x + sz.width > IOSurfaceGetWidth(s) || so.y + sz.height > IOSurfaceGetHeight(s) ||
+        dsto.x + sz.width > IOSurfaceGetWidth(d) || dsto.y + sz.height > IOSurfaceGetHeight(d)) {
+        sky_log_once(@"blit copyFromTexture: unsupported textures (no-op)");
+        return;
+    }
+    IOSurfaceLock(s, kIOSurfaceLockReadOnly, NULL);
+    if (d != s)
+        IOSurfaceLock(d, 0, NULL);
+    size_t sb = IOSurfaceGetBytesPerRow(s), db = IOSurfaceGetBytesPerRow(d);
+    const uint8_t *sp = (const uint8_t *)IOSurfaceGetBaseAddress(s) + so.y * sb + so.x * 4;
+    uint8_t *dp = (uint8_t *)IOSurfaceGetBaseAddress(d) + dsto.y * db + dsto.x * 4;
+    for (NSUInteger y = 0; y < sz.height; ++y)
+        memmove(dp + y * db, sp + y * sb, sz.width * 4);
+    if (d != s)
+        IOSurfaceUnlock(d, 0, NULL);
+    IOSurfaceUnlock(s, kIOSurfaceLockReadOnly, NULL);
 }
 
 - (void)generateMipmapsForTexture:(id<MTLTexture>)tex {
