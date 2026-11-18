@@ -481,7 +481,7 @@ static uint32_t pkt7(uint32_t op, uint32_t cnt) {
     _seq = seq;
     // debug: dump early IBs so a CP hang (kernel logs ib1 base/rem) can be
     // matched to the packet it stopped in
-    if (seq >= 8 && seq <= 20) {
+    if (seq >= 48 && seq <= 64) {
         const uint32_t *w = (const uint32_t *)_s->data.bytes;
         for (uint32_t i = 0; i < dw; i += 8) {
             char line[160];
