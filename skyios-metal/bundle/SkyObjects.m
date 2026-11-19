@@ -14,6 +14,8 @@
 #include <os/lock.h>
 
 io_connect_t sky_conn;
+extern uint32_t sky_draw_id;
+void sky_progress(uint32_t *cp, uint32_t *done);
 
 void sky_log(const char *fmt, ...) {
     char text[160];
@@ -482,6 +484,7 @@ static uint32_t pkt7(uint32_t op, uint32_t cnt) {
     // debug: dump early IBs so a CP hang (kernel logs ib1 base/rem) can be
     // matched to the packet it stopped in
     if (seq >= 48 && seq <= 64) {
+        sky_log("IB %llu: draws up to id %u", seq, sky_draw_id);
         const uint32_t *w = (const uint32_t *)_s->data.bytes;
         for (uint32_t i = 0; i < dw; i += 8) {
             char line[160];
@@ -499,6 +502,14 @@ static uint32_t pkt7(uint32_t op, uint32_t cnt) {
         uint64_t w[2] = {self->_seq, 5000}, st = 9;
         uint32_t k = 1;
         kern_return_t kr = IOConnectCallScalarMethod(sky_conn, SKY_WAIT, w, 2, &st, &k);
+        if (kr != KERN_SUCCESS || st != 0) {
+            static int tlog;
+            uint32_t cp, done;
+            sky_progress(&cp, &done);
+            if (tlog++ < 3)
+                sky_log("wait seq %llu failed (kr %#x st %llu): cp mark %#x done mark %#x (last id %u)",
+                        self->_seq, kr, st, cp, done, sky_draw_id);
+        }
         if (kr != KERN_SUCCESS || st != 0)
             self->_error = [NSError errorWithDomain:MTLCommandBufferErrorDomain code:MTLCommandBufferErrorTimeout userInfo:nil];
         [self finish:self->_error ? MTLCommandBufferStatusError : MTLCommandBufferStatusCompleted];

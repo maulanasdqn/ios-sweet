@@ -73,9 +73,29 @@ static uint32_t fbits(float f) {
 // GPU memory shared by all encoders of the process: shader code (128-byte
 // aligned), zeroed border colours, a CCU timestamp word
 enum { CODE_VS = 0x000, CODE_FS_RED = 0x080, CODE_FS_TEX = 0x100, CODE_FS_BLEND = 0x180,
-       CODE_VS_MVP = 0x280, CODE_FS_WHITE = 0x3C0, CODE_BORDER = 0x400, CODE_TS = 0x500, CODE_SIZE = 0x4000 };
+       CODE_VS_MVP = 0x280, CODE_FS_WHITE = 0x3C0, CODE_BORDER = 0x400, CODE_TS = 0x500, CODE_PROG = 0x600, CODE_DONE = 0x608, CODE_SIZE = 0x4000 };
 
 static SkyMem sky_code;
+
+// debug: per-draw progress. CODE_PROG is written by the CP when it parses
+// the marker, CODE_DONE by a CCU flush timestamp once the draw has finished,
+// so after a hang the two tell which draw stopped (logged on a wait timeout)
+uint32_t sky_draw_id;
+static void mark(NSMutableData *s, uint32_t v) {
+    uint64_t p = sky_code.iova + CODE_PROG;
+    emit(s, pkt7(0x3d, 3)); // CP_MEM_WRITE
+    emit(s, (uint32_t)p);
+    emit(s, (uint32_t)(p >> 32));
+    emit(s, v);
+}
+static void mark_done(NSMutableData *s, uint32_t v) {
+    event_ts(s, 0x1d, sky_code.iova + CODE_DONE, v);
+}
+void sky_progress(uint32_t *cp, uint32_t *done) {
+    const volatile uint32_t *w = sky_code.cpu;
+    *cp = w ? w[CODE_PROG / 4] : 0;
+    *done = w ? w[CODE_DONE / 4] : 0;
+}
 
 static BOOL code_ready(void) {
     static os_unfair_lock lock = OS_UNFAIR_LOCK_INIT;
@@ -491,6 +511,8 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
     // (SP/HLSQ config, shader and const loads) must not change under it
     if (_draws)
         wfi(s);
+    uint32_t id = ++sky_draw_id;
+    mark(s, id << 4 | 1);
     reg1(s, 0xbb08, 0x19f); // SP_UPDATE_CNTL
     for (size_t i = 0; i < sizeof(CP3D_STATE) / sizeof(CP3D_STATE[0]); i++)
         reg1(s, CP3D_STATE[i][0], CP3D_STATE[i][1]);
@@ -567,16 +589,8 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
     emit(s, (2 << 16) | (0xc << 18) | (1 << 22));
     emit(s, (uint32_t)fsa);
     emit(s, (uint32_t)(fsa >> 32));
-    uint64_t fs_const_a = _frag_gpu[1] ? _frag_gpu[1] : _frag_gpu[0];
-    NSUInteger fs_const_a_len = _frag_gpu[1] ? _frag_len[1] : _frag_len[0];
-    if (mvp && fs_const_a && fs_const_a_len > 0) {
-        uint32_t fconst_vec4 = (uint32_t)((fs_const_a_len + 15) / 16);
-        reg1(s, 0xbb10, 0x100 | fconst_vec4); // SP_PS_CONST_CONFIG: enabled + constlen
-        emit(s, pkt7(0x34, 3)); // CP_LOAD_STATE6_FRAG: FS constants
-        emit(s, (1 << 14) | (2 << 16) | (0xc << 18) | (fconst_vec4 << 22));
-        emit(s, (uint32_t)fs_const_a);
-        emit(s, (uint32_t)(fs_const_a >> 32));
-    }
+    // no FS constants: the built-in fragment programs read none (the bound
+    // buffer's whole length, 256 KiB, overflowed CONSTLEN and NUM_UNIT)
     if (textured) {
         uint32_t tex_count = fbfetch_prog ? 2 : 1;
         uint64_t samp = desc + (fbfetch_prog ? 128 : 64);
@@ -601,6 +615,8 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
     emit(s, initiator);
     emit(s, 1);
     emit(s, (uint32_t)n);
+    mark(s, id << 4 | 2);
+    mark_done(s, id << 4 | 3);
     _draws++;
 }
 
@@ -658,6 +674,8 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
     NSMutableData *s = _s;
     if (_draws)
         wfi(s); // see draw:count:start:
+    uint32_t id = ++sky_draw_id;
+    mark(s, id << 4 | 1);
     reg1(s, 0xbb08, 0x19f);
     for (size_t i = 0; i < sizeof(CP3D_STATE) / sizeof(CP3D_STATE[0]); i++)
         reg1(s, CP3D_STATE[i][0], CP3D_STATE[i][1]);
@@ -734,16 +752,8 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
     emit(s, pkt7(0x34, 3)); // CP_LOAD_STATE6_FRAG: FS icache
     emit(s, (2 << 16) | (0xc << 18) | (1 << 22));
     emit(s, (uint32_t)fsa); emit(s, (uint32_t)(fsa >> 32));
-    uint64_t fs_const = _frag_gpu[1] ? _frag_gpu[1] : _frag_gpu[0];
-    NSUInteger fs_const_len = _frag_gpu[1] ? _frag_len[1] : _frag_len[0];
-    if (mvp && fs_const && fs_const_len > 0) {
-        uint32_t fconst_vec4 = (uint32_t)((fs_const_len + 15) / 16);
-        reg1(s, 0xbb10, 0x100 | fconst_vec4);
-        emit(s, pkt7(0x34, 3)); // CP_LOAD_STATE6_FRAG: FS constants
-        emit(s, (1 << 14) | (2 << 16) | (0xc << 18) | (fconst_vec4 << 22));
-        emit(s, (uint32_t)fs_const);
-        emit(s, (uint32_t)(fs_const >> 32));
-    }
+    // no FS constants: the built-in fragment programs read none (the bound
+    // buffer's whole length, 256 KiB, overflowed CONSTLEN and NUM_UNIT)
     if (textured) {
         uint32_t tex_count = fbfetch_prog ? 2 : 1;
         uint64_t samp = desc + (fbfetch_prog ? 128 : 64);
@@ -772,6 +782,8 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
     emit(s, (uint32_t)idxGpu);        // INDX_BASE lo
     emit(s, (uint32_t)(idxGpu >> 32)); // INDX_BASE hi
     emit(s, (uint32_t)(indexCount));   // MAX_INDICES
+    mark(s, id << 4 | 2);
+    mark_done(s, id << 4 | 3);
     _draws++;
 }
 
@@ -909,6 +921,10 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
     uint64_t base; uint32_t bpr;
     if (![self resolveTexGpu:&base bpr:&bpr]) return 0;
     uint64_t rtbase = _rt.iova + _rt.offset;
+    if (sky_draw_id + 1 >= 70 && sky_draw_id + 1 <= 80)
+        sky_log("fbfetch id %u: tex %lux%lu fmt %lu %#llx bpr %u | rt %ux%u %#llx bpr %llu",
+                sky_draw_id + 1, (unsigned long)_tex.width, (unsigned long)_tex.height,
+                (unsigned long)_tex.pixelFormat, base, bpr, _w, _h, rtbase, (unsigned long long)_rt.bpr);
     uint32_t d[40] = {0};
     // tex0: layer texture (same as textureDescriptor)
     d[0] = 0x4c006880;
