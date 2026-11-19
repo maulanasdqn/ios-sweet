@@ -487,6 +487,10 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
     }
     uint64_t fs = sky_programs[prog].code;
     NSMutableData *s = _s;
+    // a previous draw of this pass may still run: the full state below
+    // (SP/HLSQ config, shader and const loads) must not change under it
+    if (_draws)
+        wfi(s);
     reg1(s, 0xbb08, 0x19f); // SP_UPDATE_CNTL
     for (size_t i = 0; i < sizeof(CP3D_STATE) / sizeof(CP3D_STATE[0]); i++)
         reg1(s, CP3D_STATE[i][0], CP3D_STATE[i][1]);
@@ -652,6 +656,8 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
 
     uint64_t fs = sky_programs[prog].code;
     NSMutableData *s = _s;
+    if (_draws)
+        wfi(s); // see draw:count:start:
     reg1(s, 0xbb08, 0x19f);
     for (size_t i = 0; i < sizeof(CP3D_STATE) / sizeof(CP3D_STATE[0]); i++)
         reg1(s, CP3D_STATE[i][0], CP3D_STATE[i][1]);
