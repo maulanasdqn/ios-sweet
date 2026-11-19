@@ -110,6 +110,25 @@ Bisect probe80 (refusing to render into texture-owned surfaces) made backboardd 
 Next ideas: dump IB 55 (it ran just before), check CCU/blit state left by the earlier pass, try
 `CP_SET_DRAW_STATE`/WFI between passes, compare against freedreno's sysmem pass setup.
 
+**GPU CP hang SOLVED (session 16, 2026-11-19, observed):** per-draw progress markers (commit 1611cf1:
+CP_MEM_WRITE at CODE_PROG + CCU-flush timestamp at CODE_DONE, logged as `wait seq N failed: cp mark ..
+done mark ..`) showed the hanging draw: probe84 draw 75 / probe85 draw 77 = CA's framebuffer-fetch
+blend program (CODE_FS_BLEND, samples the render target as tex1) drawing into a freshly cleared 64x64
+offscreen target (fbfetch into the 1125x2436 surface worked). The earlier "IB 57" reading was wrong
+(ib1 rem is the prefetch position). Fix 77c2d45: those pipelines use CODE_FS_TEX + RB blend
+ONE/ONE_MINUS_SRC_ALPHA (PROG_TEX_OVER). **probe86: no hang, GPU present stays on all boot**
+(GPU present ~2 ms, 10-11 swaps/s while animating). Also: WFI between draws of one pass (2c4bb39,
+not the cause), FS constant load dropped (its length was the whole 256 KiB buffer).
+**But the output is wrong** (`logs/shot-probe86-*.png`: flat blue skewed quads on black): 447
+`draw skipped` lines, i.e. most CA textured draws are dropped: no texture bound at idx 0 (CA binds
+idx >= 1), A8/RG8 (fmt 1/30) textures rejected, buffer textures with bpr not a multiple of 64 (784),
+std_vert*/downsample_blur/narrow_blur/luma_boost pipelines unmapped (prog -1 / 0). Solid fills use
+CODE_FS_WHITE (ignore CA's colour) and their transform looks wrong. The Metal bundle maps CA's
+pipelines onto 5 hand-written shaders; correct output needs: CA's vertex layouts (vertex_layout=,
+texcoord_count0/1), colour/opacity from the fragment buffer, texture index binding, A8/RG8/R16 formats,
+unaligned pitches (copy or TEX_CONST pitch alignment), and blur/effects (can be skipped first).
+Images: `shim-boot-probe86.img` (backboardd on Metal), daily image unchanged (software CA).
+
 **Console text race (observed):** the SAME image (probe81) once showed console text at 120-210 s
 while backboardd presented ~10 swaps/s (CA showing its snapshot of the panel = console text), and
 on a re-run (probe81b) showed the lock screen (120 s) and home screen (180 s). Fix (commit 44b86f5,
