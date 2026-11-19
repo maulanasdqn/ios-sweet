@@ -250,7 +250,12 @@ static const struct {
     {@"sky_position_uv_vertex", @"sky_fb_blend_fragment", CODE_FS_BLEND, YES, YES, NO},
     {@"ca_fixed_vert", @"ca_fixed_frag_blend", CODE_FS_BLEND, YES, YES, YES},
     {@"ca_fixed_vert", @"ca_fixed_frag_solid", CODE_FS_WHITE, NO, NO, YES},
+    // CA's framebuffer-fetch blend as fixed-function source-over (ONE,
+    // ONE_MINUS_SRC_ALPHA): sampling the render target while drawing into it
+    // hung the GPU (64x64 offscreen target, probe84/85)
+    {@"ca_fixed_vert", @"ca_fixed_frag_tex_over", CODE_FS_TEX, YES, NO, YES},
 };
+enum { PROG_TEX_OVER = 5 };
 
 #pragma mark - render targets
 
@@ -358,7 +363,7 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
     NSUInteger _frag_len[8];
     MTLViewport _vp;
     BOOL _hasVP;
-    int _progcount[5];
+    int _progcount[6];
 }
 
 - (instancetype)initWithStream:(NSMutableData *)s owner:(id)owner target:(SkyImport)rt surface:(IOSurfaceRef)surf width:(uint32_t)w height:(uint32_t)h info:(uint32_t)info {
@@ -472,7 +477,7 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
         BOOL has_texture = [fk containsString:@"image_count="];
         BOOL has_fbfetch = [fk containsString:@"framebuffer_fetch=1"];
         if (has_texture && has_fbfetch)
-            return 3; // ca_fixed: MVP vertex shader + fb blend fragment
+            return PROG_TEX_OVER; // ca_fixed: MVP vertex shader + texture, RB blending
         if (has_fbfetch)
             return 4; // ca_fixed: MVP vertex shader + solid color (no texture)
         if (has_texture)
@@ -488,7 +493,7 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
 // cp3d.rs emit_state + emit_draw, viewport/scissors for the whole target
 - (void)draw:(uint32_t)initiator count:(NSUInteger)n start:(NSUInteger)first {
     int prog = [self resolveProgram];
-    if (prog >= 0 && prog < 5) _progcount[prog]++;
+    if (prog >= 0 && prog < 6) _progcount[prog]++;
     BOOL textured = prog >= 0 && sky_programs[prog].textured;
     BOOL fbfetch_prog = prog >= 0 && sky_programs[prog].fbfetch;
     uint64_t desc = textured ? (fbfetch_prog ? [self fbFetchDescriptor] : [self textureDescriptor]) : 0;
@@ -520,9 +525,14 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
         for (size_t i = 0; i < sizeof(CP3D_TEXQ) / sizeof(CP3D_TEXQ[0]); i++)
             reg1(s, CP3D_TEXQ[i][0], CP3D_TEXQ[i][1]);
     // blend state of the pipeline (STATE has blending off, all components)
-    BOOL blend = (_mrtControl & 3) != 0;
-    reg1(s, 0x8820, _mrtControl ? _mrtControl : 0x7e0); // RB_MRT[0].CONTROL
-    reg1(s, 0x8821, _mrtBlend);                         // RB_MRT[0].BLEND_CONTROL
+    uint32_t mctl = _mrtControl ? _mrtControl : 0x7e0, mbl = _mrtBlend;
+    if (prog == PROG_TEX_OVER) {
+        mctl = (mctl & 0x780) | (0xc << 3) | 3; // ROP COPY, colour + alpha blend
+        mbl = 0x07010701;                       // ONE, ADD, ONE_MINUS_SRC_ALPHA (rgb and alpha)
+    }
+    BOOL blend = (mctl & 3) != 0;
+    reg1(s, 0x8820, mctl); // RB_MRT[0].CONTROL
+    reg1(s, 0x8821, mbl);  // RB_MRT[0].BLEND_CONTROL
     reg1(s, 0xa989, blend ? 0x101 : 0x100);              // SP_BLEND_CNTL: ENABLE_BLEND mrt0
     reg1(s, 0x8865, blend ? 0xffff0101 : 0xffff0100);    // RB_BLEND_CNTL: BLEND_READS_DEST mrt0
     uint32_t br = (_w - 1) | ((_h - 1) << 16);
@@ -648,7 +658,7 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
     uint32_t initiator = prim | (0 << 6) | (1 << 8) | (idxSize << 10);
 
     int prog = [self resolveProgram];
-    if (prog >= 0 && prog < 5) _progcount[prog]++;
+    if (prog >= 0 && prog < 6) _progcount[prog]++;
     static int idxlog;
     if (idxlog++ < 5)
         sky_log("indexed draw: prog=%d %s + %s n=%lu", prog,
@@ -682,9 +692,14 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
     if (textured)
         for (size_t i = 0; i < sizeof(CP3D_TEXQ) / sizeof(CP3D_TEXQ[0]); i++)
             reg1(s, CP3D_TEXQ[i][0], CP3D_TEXQ[i][1]);
-    BOOL blend = (_mrtControl & 3) != 0;
-    reg1(s, 0x8820, _mrtControl ? _mrtControl : 0x7e0);
-    reg1(s, 0x8821, _mrtBlend);
+    uint32_t mctl = _mrtControl ? _mrtControl : 0x7e0, mbl = _mrtBlend;
+    if (prog == PROG_TEX_OVER) {
+        mctl = (mctl & 0x780) | (0xc << 3) | 3; // ROP COPY, colour + alpha blend
+        mbl = 0x07010701;                       // ONE, ADD, ONE_MINUS_SRC_ALPHA (rgb and alpha)
+    }
+    BOOL blend = (mctl & 3) != 0;
+    reg1(s, 0x8820, mctl); // RB_MRT[0].CONTROL
+    reg1(s, 0x8821, mbl);  // RB_MRT[0].BLEND_CONTROL
     reg1(s, 0xa989, blend ? 0x101 : 0x100);
     reg1(s, 0x8865, blend ? 0xffff0101 : 0xffff0100);
     uint32_t br = (_w - 1) | ((_h - 1) << 16);
@@ -791,9 +806,9 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
 - (void)endEncoding {
     static int nlog;
     if (nlog++ < 10)
-        sky_log("GPU endEncoding: %lu draws, %lu skipped | p0=%d p1=%d p2=%d p3=%d p4=%d",
+        sky_log("GPU endEncoding: %lu draws, %lu skipped | p0=%d p1=%d p2=%d p3=%d p4=%d p5=%d",
                 (unsigned long)_draws, (unsigned long)_skipped,
-                _progcount[0], _progcount[1], _progcount[2], _progcount[3], _progcount[4]);
+                _progcount[0], _progcount[1], _progcount[2], _progcount[3], _progcount[4], _progcount[5]);
     uint64_t ts = sky_code.iova + CODE_TS;
     event_ts(_s, 0x1d, ts, 0x40); // PC_CCU_FLUSH_COLOR_TS
     event(_s, 0x19);              // PC_CCU_INVALIDATE_COLOR
