@@ -52,6 +52,8 @@ typedef struct {
 
 // MTLSamplerDescriptor -> A6XX_TEX_SAMP_0 (filters, wraps)
 uint32_t sky_sampler_word(id<MTLSamplerState> s);
+// the sampler takes pixel coordinates (A6XX_TEX_SAMP_1 UNNORM_COORDS)
+BOOL sky_sampler_unnorm(id<MTLSamplerState> s);
 // bytes per pixel of the texture formats the Adreno path samples (0: none)
 NSUInteger sky_tex_bpe(MTLPixelFormat f);
 

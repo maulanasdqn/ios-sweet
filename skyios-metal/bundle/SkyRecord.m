@@ -224,6 +224,7 @@ static NSString *consts_string(MTLFunctionConstantValues *v) {
 @interface SkySampler : SkyObject <MTLSamplerState>
 @property (weak) id<MTLDevice> device;
 @property uint32_t samp0;
+@property BOOL unnorm;
 @end
 @implementation SkySampler
 @end
@@ -238,6 +239,10 @@ static uint32_t sky_wrap(MTLSamplerAddressMode m) {
     case MTLSamplerAddressModeClampToBorderColor: return 3; // border colour table: zeros
     default: return 1;                                      // clamp to edge
     }
+}
+
+BOOL sky_sampler_unnorm(id<MTLSamplerState> s) {
+    return [s isKindOfClass:[SkySampler class]] && ((SkySampler *)s).unnorm;
 }
 
 uint32_t sky_sampler_word(id<MTLSamplerState> s) {
@@ -582,6 +587,7 @@ id sky_render_encoder(id<MTLDevice> dev, MTLRenderPassDescriptor *d) {
     // A6XX_TEX_SAMP_0: XY_MAG, XY_MIN, WRAP_S/T/R (one mip level only)
     s.samp0 = ((uint32_t)d.magFilter << 1) | ((uint32_t)d.minFilter << 3) | (sky_wrap(d.sAddressMode) << 5) |
               (sky_wrap(d.tAddressMode) << 8) | (sky_wrap(d.rAddressMode) << 11);
+    s.unnorm = !d.normalizedCoordinates;
     return s;
 }
 - (id<MTLDepthStencilState>)newDepthStencilStateWithDescriptor:(MTLDepthStencilDescriptor *)d {

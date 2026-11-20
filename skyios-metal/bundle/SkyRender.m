@@ -476,7 +476,8 @@ static BOOL tex_format(MTLPixelFormat f, uint32_t *fmt, uint32_t *swap, uint32_t
 }
 
 // Metal's constexpr sampler state (AIR): s/t/r address bits 0-8 (0 zero,
-// 1 edge, 2 repeat, 3 mirrored repeat, 4 border), mag bit 9, min bit 11
+// 1 edge, 2 repeat, 3 mirrored repeat, 4 border), mag bit 9, min bit 11,
+// mip bits 13-14, bit 15 coord::pixel (A6XX_TEX_SAMP_1 UNNORM_COORDS)
 static uint32_t const_sampler_word(uint64_t bits) {
     static const uint8_t wrap[] = {3, 1, 0, 2, 3, 1, 1, 1};
     return (uint32_t)((bits >> 9) & 1) << 1 | (uint32_t)((bits >> 11) & 1) << 3 | (uint32_t)wrap[bits & 7] << 5 |
@@ -978,6 +979,10 @@ uint64_t sky_perf_draw_ticks, sky_perf_draws, sky_perf_tex_ticks, sky_perf_fb_ti
         const SkyProgSampler *sm = &e->samp[i < e->nsamp ? i : 0];
         memset(samp[i], 0, 16);
         samp[i][0] = sm->metal == 0xff ? const_sampler_word(sm->bits) : sky_sampler_word(sm->metal < 16 ? _samps[sm->metal] : nil);
+        // pixel coordinates sampled as normalised ones read far outside the
+        // texture: blocky, "pixelated" blurs
+        BOOL unnorm = sm->metal == 0xff ? (sm->bits >> 15) & 1 : sky_sampler_unnorm(sm->metal < 16 ? _samps[sm->metal] : nil);
+        samp[i][1] = unnorm ? 1u << 5 : 0;
     }
 
     NSMutableData *s = _s;
