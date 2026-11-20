@@ -75,6 +75,15 @@ localbuild/build60.log (path dxb->ci-clean2) and relinked with ci-clean2/build.l
   (FMT6_ASTC_4x4 0xc1, block-row pitch, block surfaces, bytes-no-copy and buffer->texture uploads,
   new one-time logs `buffer texture fmt`, `bytes texture fmt`, `blit buffer->texture fmt` to see
   which path CA uses). probe111 image rebuilt with it (+ the CCU wait); not booted yet.
+- **probe111a-114 (2026-11-20 21:00-21:28, observed):** 111a (GPU, ASTC, shared scratch + CCU
+  wait): no skipped draws (ASTC via `buffer texture fmt 204` and `bytes texture fmt 204 120x120`),
+  lock clock text missing again -> scratch back to per command buffer (7b0ce3b); home wallpaper
+  black. 112 (+ `sweetautobahn=1`): iOS 16 poster lock screen (date above clock), wallpaper black,
+  clock dark grey, ~55 swaps/s (fb copy 6.5 ms/commit). 113 (same, software CA): wallpaper black too,
+  clock red (vibrancy colour from the poster) -> **not a GPU driver problem**. 114 (no sweetaccel):
+  backboardd draws nothing (console text) -> the accelerator is required. daily3 (2026-11-16, user
+  saw the wallpaper) had `sweetautobahn=1`, kernel build69, no sweetaccel. Open: why the poster image
+  never reaches the screen; asked the user whether their wallpaper is red-dominant.
 - **`skyios-shim/out/shim-boot-skyios-gpu.img`** (2026-11-20 12:40): daily cmdline (no auto
   reboot, no sims) + `sweetmetal_procs=skyios-accel-test,backboardd` + kernel k93 + bundle of
   commit d668d2f: CoreAnimation on the GPU for normal use. Booted and left running.
