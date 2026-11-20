@@ -97,6 +97,16 @@ localbuild/build60.log (path dxb->ci-clean2) and relinked with ci-clean2/build.l
   in backboardd (the 16 KiB bitmap + L3 array went through the stack in user open) -> both moved
   to statics, kernel k119 (scratchpad), image `shim-boot-probe119.img`, NOT booted yet: the phone
   hung on the probe118 panic screen (no USB), needs a manual reset.
+- **probe119 (k119, 23:26, observed):** boots, "up to 512 MiB", no panic. User in Settings ->
+  Accessibility -> Motion: page transition frozen with the old page visible (photo; shots 0-3).
+  SMMU fault far 0x0 fsynr 0x2 again (fence 1193->1196, ib1 rem 81703) -> GPU present disabled,
+  BUT only 78 MiB live (peak 120) -> **the IOVA window was NOT the cause** (the 512 MiB change is
+  harmless, kept). Also `GPU present failed after 567 frames` before it. Wait-timeout log shows
+  cp mark 0 / done mark 0 (marks unreadable?). Suspects, unverified: an address-0 operand in some
+  packet (fbCopy's CP_WAIT_REG_MEM from 12c4140, a texture/buffer with iova 0), formats 550
+  (BGRA10_XR) and the "no program" fbfetch variants are skipped, not causes. Next: route every
+  emitted GPU address through a checked helper (log the site, drop the command buffer instead of
+  faulting), and boot without the CCU waits to bisect.
 - **`skyios-shim/out/shim-boot-skyios-gpu.img`** (2026-11-20 12:40): daily cmdline (no auto
   reboot, no sims) + `sweetmetal_procs=skyios-accel-test,backboardd` + kernel k93 + bundle of
   commit d668d2f: CoreAnimation on the GPU for normal use. Booted and left running.
