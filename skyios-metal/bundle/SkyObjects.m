@@ -27,10 +27,58 @@ void sky_log(const char *fmt, ...) {
         IOConnectCallMethod(sky_conn, SKY_LOG, NULL, 0, text, strlen(text), NULL, NULL, NULL, NULL);
 }
 
+// kernel allocations are expensive to make and to free (freeing maps and
+// unmaps GPU pages and waits for the GPU to go idle): freed memory goes to a
+// small pool and is handed out again, zeroed, for requests that fit
+// The pool keeps GPU address space mapped (128 MiB for all of a client's
+// buffers and imported surfaces): only small allocations, 8 MiB in total
+// (probe94-97: an unbounded pool ran imports out of space, kIOReturnNoSpace,
+// and the skipped draws broke the home screen).
+// A freed allocation may still be read by submitted work (a blit encoder does
+// not retain its buffers, and freeing in the kernel used to wait for the GPU):
+// it is reused only once the GPU has completed every submit made before the free
+enum { POOL_MAX = 24 };
+static const BOOL pool_on = YES;
+uint64_t sky_seq_submitted, sky_seq_completed;
+static SkyMem pool[POOL_MAX];
+static uint64_t pool_seq[POOL_MAX];
+static uint64_t pool_bytes;
+#define POOL_ENTRY_MAX (1ULL << 20)
+#define POOL_BYTES_MAX (8ULL << 20)
+static int pool_n;
+static os_unfair_lock pool_lock = OS_UNFAIR_LOCK_INIT;
+
+static uint64_t pool_size(uint64_t size) {
+    if (size > POOL_ENTRY_MAX)
+        return (size + 0x3fff) & ~0x3fffULL; // not pooled: no rounding up
+    uint64_t r = 65536;
+    while (r < size)
+        r <<= 1;
+    return r;
+}
+
 BOOL sky_alloc(uint64_t size, SkyMem *m) {
+    uint64_t want = pool_size(size);
+    os_unfair_lock_lock(&pool_lock);
+    uint64_t done = __atomic_load_n(&sky_seq_completed, __ATOMIC_ACQUIRE);
+    for (int i = 0; i < pool_n; i++) {
+        if (pool[i].size == want && pool_seq[i] <= done) {
+            *m = pool[i];
+            pool_n--;
+            pool_bytes -= want;
+            pool[i] = pool[pool_n];
+            pool_seq[i] = pool_seq[pool_n];
+            os_unfair_lock_unlock(&pool_lock);
+            memset(m->cpu, 0, (size_t)size);
+            m->size = size;
+            m->pool = want;
+            return YES;
+        }
+    }
+    os_unfair_lock_unlock(&pool_lock);
     uint64_t out[3] = {0};
     uint32_t n = 3;
-    kern_return_t kr = IOConnectCallScalarMethod(sky_conn, SKY_ALLOC, &size, 1, out, &n);
+    kern_return_t kr = IOConnectCallScalarMethod(sky_conn, SKY_ALLOC, &want, 1, out, &n);
     if (kr != KERN_SUCCESS) {
         static int nfail;
         if (nfail++ < 3)
@@ -41,12 +89,26 @@ BOOL sky_alloc(uint64_t size, SkyMem *m) {
     m->iova = out[1];
     m->cpu = (void *)(uintptr_t)out[2];
     m->size = size;
+    m->pool = want;
     return YES;
 }
 
 void sky_free(SkyMem *m) {
-    if (m->handle)
+    if (!m->handle)
+        return;
+    os_unfair_lock_lock(&pool_lock);
+    if (pool_on && pool_n < POOL_MAX && m->pool && m->pool <= POOL_ENTRY_MAX &&
+        pool_bytes + m->pool <= POOL_BYTES_MAX) {
+        pool_bytes += m->pool;
+        pool[pool_n] = *m;
+        pool[pool_n].size = m->pool;
+        pool_seq[pool_n] = __atomic_load_n(&sky_seq_submitted, __ATOMIC_ACQUIRE);
+        pool_n++;
+        os_unfair_lock_unlock(&pool_lock);
+    } else {
+        os_unfair_lock_unlock(&pool_lock);
         IOConnectCallScalarMethod(sky_conn, SKY_FREE, &m->handle, 1, NULL, NULL);
+    }
     m->handle = 0;
 }
 
@@ -99,6 +161,10 @@ static CFTimeInterval sky_now(void) {
 }
 
 - (void)dealloc {
+    // Metal buffers go back to the kernel, not the pool: with them pooled the
+    // home screen broke (probe94, probe96 with the completion gate); the free
+    // also waits for the GPU, which CA's buffer reuse seems to rely on
+    _mem.pool = 0;
     sky_free(&_mem);
 }
 
@@ -285,6 +351,9 @@ static uint32_t pkt7(uint32_t op, uint32_t cnt) {
         _s = s;
         _cb = cb;
         _keep = [NSMutableArray new];
+        // buffers of the copies live as long as the command buffer, not the
+        // encoder: the GPU runs the copies after commit
+        objc_setAssociatedObject(cb, (__bridge const void *)self, _keep, OBJC_ASSOCIATION_RETAIN);
     }
     return self;
 }
@@ -453,7 +522,37 @@ static uint32_t pkt7(uint32_t op, uint32_t cnt) {
     dispatch_semaphore_signal(_done);
 }
 
+// perf: every 600 commits, the average CPU cost per commit of draws (SkyRender.m),
+// of commit itself, and the time between commits
+static void perf_commit(uint64_t commit_ticks, size_t bytes) {
+    extern uint64_t sky_perf_draw_ticks, sky_perf_draws;
+    static uint64_t n, ticks, last, gap, sz;
+    static mach_timebase_info_data_t tb;
+    if (!tb.denom)
+        mach_timebase_info(&tb);
+    uint64_t now = mach_absolute_time();
+    if (last)
+        gap += now - last;
+    last = now;
+    ticks += commit_ticks;
+    sz += bytes;
+    if (++n == 600) {
+        double us = (double)tb.numer / tb.denom / 1000.0;
+        sky_log("perf 600 commits: draws %llu (%.0f us each), per commit: draw %.0f us, commit %.0f us, gap %.0f us, %llu bytes",
+                sky_perf_draws, sky_perf_draws ? sky_perf_draw_ticks * us / sky_perf_draws : 0.0,
+                sky_perf_draw_ticks * us / n, ticks * us / n, gap * us / n, sz / n);
+        n = ticks = gap = sz = 0;
+        sky_perf_draw_ticks = sky_perf_draws = 0;
+    }
+}
+
 - (void)commit {
+    uint64_t perf_t0 = mach_absolute_time();
+    [self commitImpl];
+    perf_commit(mach_absolute_time() - perf_t0, _s->data.length);
+}
+
+- (void)commitImpl {
     extern uint64_t sky_commits;
     __atomic_add_fetch(&sky_commits, 1, __ATOMIC_RELAXED);
     [self enqueue];
@@ -501,6 +600,9 @@ static uint32_t pkt7(uint32_t op, uint32_t cnt) {
         return;
     }
     _seq = seq;
+    for (uint64_t cur = __atomic_load_n(&sky_seq_submitted, __ATOMIC_RELAXED);
+         seq > cur && !__atomic_compare_exchange_n(&sky_seq_submitted, &cur, seq, NO, __ATOMIC_RELEASE, __ATOMIC_RELAXED);)
+        ;
     _status = MTLCommandBufferStatusScheduled;
     for (MTLCommandBufferHandler h in _scheduled)
         h(self);
@@ -509,6 +611,11 @@ static uint32_t pkt7(uint32_t op, uint32_t cnt) {
         uint64_t w[2] = {self->_seq, 5000}, st = 9;
         uint32_t k = 1;
         kern_return_t kr = IOConnectCallScalarMethod(sky_conn, SKY_WAIT, w, 2, &st, &k);
+        if (kr == KERN_SUCCESS && st == 0)
+            for (uint64_t cur = __atomic_load_n(&sky_seq_completed, __ATOMIC_RELAXED);
+                 self->_seq > cur &&
+                 !__atomic_compare_exchange_n(&sky_seq_completed, &cur, self->_seq, NO, __ATOMIC_RELEASE, __ATOMIC_RELAXED);)
+                ;
         if (kr != KERN_SUCCESS || st != 0) {
             static int tlog;
             uint32_t cp, done;

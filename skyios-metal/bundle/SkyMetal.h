@@ -14,6 +14,7 @@ void sky_log(const char *fmt, ...) __printflike(1, 2);
 typedef struct {
     uint64_t handle, iova, size;
     void *cpu;
+    uint64_t pool; // size class of the kernel allocation (SkyObjects.m pool)
 } SkyMem;
 
 BOOL sky_alloc(uint64_t size, SkyMem *m);

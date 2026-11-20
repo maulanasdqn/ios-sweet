@@ -17,6 +17,7 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #include <os/lock.h>
+#include <mach/mach_time.h>
 #include "../test/cp3d-tables.h"
 #include "SkyPrograms.h"
 
@@ -288,7 +289,8 @@ static BOOL import_surface(IOSurfaceRef s, SkyImport *out) {
         for (int tries = 0; tries < 8; tries++) {
             if (cache.count < MAX_IMPORTS) {
                 kr = IOConnectCallScalarMethod(sky_conn, SKY_IMPORT, &in, 1, o, &n);
-                if (kr != kIOReturnNoResources)
+                // out of slots or of GPU address space: evict and retry
+                if (kr != kIOReturnNoResources && kr != kIOReturnNoSpace)
                     break;
             }
             // release the least recently used import nobody can still reference
@@ -600,7 +602,13 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
     _mrtBlend = [(id<SkyPipelineNames>)p mrtBlend];
     _vkey = [(id<SkyPipelineNames>)p vkey];
     _vdesc = [(id<SkyPipelineNames>)p vdesc];
-    _prog = prog_lookup(_vkey, _fkey);
+    static const char key;
+    NSValue *cached = objc_getAssociatedObject(p, &key);
+    if (!cached) {
+        cached = [NSValue valueWithPointer:prog_lookup(_vkey, _fkey)];
+        objc_setAssociatedObject(p, &key, cached, OBJC_ASSOCIATION_RETAIN);
+    }
+    _prog = cached.pointerValue;
 }
 
 - (void)setVertexBytes:(const void *)p length:(NSUInteger)l atIndex:(NSUInteger)i {
@@ -714,6 +722,35 @@ static NSString *hexs(const uint8_t *p, size_t n) {
     if ([_vname hasPrefix:@"std_vert"])
         return 0;
     return -1;
+}
+
+// CP3D_STATE and a program's registers as ready-made packets, built once
+static NSData *packed_regs(const uint32_t (*r)[2], size_t n) {
+    NSMutableData *d = [NSMutableData dataWithCapacity:n * 8];
+    for (size_t i = 0; i < n; i++)
+        reg1(d, r[i][0], r[i][1]);
+    return d;
+}
+static NSData *base_state(void) {
+    static NSData *d;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        d = packed_regs(CP3D_STATE, sizeof(CP3D_STATE) / sizeof(CP3D_STATE[0]));
+    });
+    return d;
+}
+static NSData *prog_state(const SkyProg *p) {
+    static os_unfair_lock lock = OS_UNFAIR_LOCK_INIT;
+    static NSMutableDictionary<NSValue *, NSData *> *cache;
+    os_unfair_lock_lock(&lock);
+    if (!cache)
+        cache = [NSMutableDictionary dictionary];
+    NSValue *k = [NSValue valueWithPointer:p];
+    NSData *d = cache[k];
+    if (!d)
+        cache[k] = d = packed_regs(p->regs, p->nregs);
+    os_unfair_lock_unlock(&lock);
+    return d;
 }
 
 // CP_LOAD_STATE6 with the data in the packet: `n` vec4s to const `dst` (vec4)
@@ -849,7 +886,17 @@ static void load_ubos(NSMutableData *s, uint32_t op, uint32_t sb, const SkyProgU
 }
 
 // a draw with a compiled CoreAnimation program (SkyPrograms.h)
+// perf: mach time spent in drawProg and draws, read by the commit log (SkyObjects.m)
+uint64_t sky_perf_draw_ticks, sky_perf_draws;
+
 - (void)drawProg:(uint32_t)initiator count:(NSUInteger)n start:(NSUInteger)first index:(uint64_t)ibuf indexSize:(uint32_t)isz {
+    uint64_t t0 = mach_absolute_time();
+    [self drawProgImpl:initiator count:n start:first index:ibuf indexSize:isz];
+    sky_perf_draw_ticks += mach_absolute_time() - t0;
+    sky_perf_draws++;
+}
+
+- (void)drawProgImpl:(uint32_t)initiator count:(NSUInteger)n start:(NSUInteger)first index:(uint64_t)ibuf indexSize:(uint32_t)isz {
     const SkyProgEntry *e = _prog;
     if (!e) {
         if (_noProg++ < 3)
@@ -919,13 +966,10 @@ static void load_ubos(NSMutableData *s, uint32_t op, uint32_t sb, const SkyProgU
     NSMutableData *s = _s;
     if (_draws)
         wfi(s);
-    uint32_t id = ++sky_draw_id;
-    mark(s, id << 4 | 1);
+    ++sky_draw_id;
     reg1(s, 0xbb08, 0x19f); // SP_UPDATE_CNTL
-    for (size_t i = 0; i < sizeof(CP3D_STATE) / sizeof(CP3D_STATE[0]); i++)
-        reg1(s, CP3D_STATE[i][0], CP3D_STATE[i][1]);
-    for (uint32_t i = 0; i < p->nregs; i++)
-        reg1(s, p->regs[i][0], p->regs[i][1]);
+    [s appendData:base_state()];
+    [s appendData:prog_state(p)];
     // blend state of the pipeline
     uint32_t mctl = _mrtControl ? _mrtControl : 0x7e0;
     BOOL blend = (mctl & 3) != 0;
@@ -1025,15 +1069,12 @@ static void load_ubos(NSMutableData *s, uint32_t op, uint32_t sb, const SkyProgU
         emit(s, 1);
         emit(s, (uint32_t)n);
     }
-    mark(s, id << 4 | 2);
-    mark_done(s, id << 4 | 3);
     _draws++;
     _progDraws++;
 }
 
 // cp3d.rs emit_state + emit_draw, viewport/scissors for the whole target
 - (void)draw:(uint32_t)initiator count:(NSUInteger)n start:(NSUInteger)first {
-    [self dumpDraw:n];
     if (_prog || [_vname hasPrefix:@"fixed_vert"] || [_vname hasPrefix:@"std_vert"]) {
         [self drawProg:initiator count:n start:first index:0 indexSize:0];
         return;
@@ -1203,7 +1244,6 @@ static void load_ubos(NSMutableData *s, uint32_t op, uint32_t sb, const SkyProgU
     // SOURCE_SELECT=0 (DMA/indexed), VIS_CULL=1 (USE_VISIBILITY), INDEX_SIZE
     uint32_t initiator = prim | (0 << 6) | (1 << 8) | (idxSize << 10);
 
-    [self dumpDraw:indexCount];
     if (_prog || [_vname hasPrefix:@"fixed_vert"] || [_vname hasPrefix:@"std_vert"]) {
         [self drawProg:initiator count:indexCount start:0 index:indexBuffer.gpuAddress + indexBufferOffset
              indexSize:indexType == MTLIndexTypeUInt32 ? 4 : 2];
