@@ -121,6 +121,22 @@ localbuild/build60.log (path dxb->ci-clean2) and relinked with ci-clean2/build.l
   going. Same IC silence as the 0100s long-press (early-gpu.md), now for the whole boot. Next:
   touch watchdog (no frame for N s -> GT9896 reset via TLMM + re-init), then the CC blur
   (pixelated, "no program" fbfetch blend_function=54 variants) and format 550.
+- **probe122-124 + daily image (2026-11-21 00:01-00:20, observed):**
+  - 122 (k122 = k121 + xnu 0119 touch quiet reset): the reset fires after 3 s of silence and
+    frames resume each time (72 -> 159 -> 244 -> 513 -> 818). **User: wallpaper works** (after the
+    posterwall restore of probe117).
+  - 123 (+ c37ed59: 31 more CA programs, 82 of 86 compile; color_opcodes arrays unsupported):
+    no fault, 19 skipped draws (fmt 550/554), "no program" 53 (was thousands). But
+    `GPU present failed after 5001 frames` -> CPU present for the rest of the boot.
+  - Cause: sweet_rs_gpu_blit/compose returned false when a user submission held BUSY, and one
+    failure disabled the GPU present. 2947b36: spin for BUSY (as sweet_rs_gpu_wait) + xnu 0120
+    (off only after 8 failures in a row). 124 (k124): no fault, 0 skipped, no present failure,
+    ~57 swaps/s all boot. Touch 0 frames (probe ok; probably not touched).
+  - **Daily image rebuilt:** `skyios-shim/out/shim-boot-skyios-gpu.img` = k124 (scratchpad) +
+    bundle of c37ed59 in the ramdisk + the old daily cmdline + `sweetautobahn=1` (no reboot/sims/
+    shots). Previous one kept in the session scratchpad.
+  - Still open: formats 550/554 (BGRA10_XR, 19 draws), 2 programs with color_opcodes arrays, the
+    fbfetch scratch reuse (lock clock text), the user asked for an iOS upgrade after stabilising.
 - **`skyios-shim/out/shim-boot-skyios-gpu.img`** (2026-11-20 12:40): daily cmdline (no auto
   reboot, no sims) + `sweetmetal_procs=skyios-accel-test,backboardd` + kernel k93 + bundle of
   commit d668d2f: CoreAnimation on the GPU for normal use. Booted and left running.
