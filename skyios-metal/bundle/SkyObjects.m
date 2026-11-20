@@ -415,6 +415,27 @@ static uint32_t pkt7(uint32_t op, uint32_t cnt) {
         [_s copyWord:sa + done to:da + done];
 }
 
+// buffer -> texture, level 0 of IOSurface-backed textures (ASTC images
+// among them): replaceRegion on the CPU at encode time (ordering not kept,
+// like copyFromTexture below)
+- (void)copyFromBuffer:(id<MTLBuffer>)src sourceOffset:(NSUInteger)so sourceBytesPerRow:(NSUInteger)sbpr
+    sourceBytesPerImage:(NSUInteger)sbpi sourceSize:(MTLSize)sz toTexture:(id<MTLTexture>)dst
+       destinationSlice:(NSUInteger)ds destinationLevel:(NSUInteger)dl destinationOrigin:(MTLOrigin)o {
+    sky_log_once([NSString stringWithFormat:@"blit buffer->texture fmt %lu level %lu", (unsigned long)dst.pixelFormat,
+                                            (unsigned long)dl]);
+    if (!src || !dst || ds || dl)
+        return;
+    [dst replaceRegion:MTLRegionMake2D(o.x, o.y, sz.width, sz.height) mipmapLevel:0
+             withBytes:(const uint8_t *)src.contents + so bytesPerRow:sbpr];
+}
+- (void)copyFromBuffer:(id<MTLBuffer>)src sourceOffset:(NSUInteger)so sourceBytesPerRow:(NSUInteger)sbpr
+    sourceBytesPerImage:(NSUInteger)sbpi sourceSize:(MTLSize)sz toTexture:(id<MTLTexture>)dst
+       destinationSlice:(NSUInteger)ds destinationLevel:(NSUInteger)dl destinationOrigin:(MTLOrigin)o
+                options:(MTLBlitOption)opt {
+    [self copyFromBuffer:src sourceOffset:so sourceBytesPerRow:sbpr sourceBytesPerImage:sbpi sourceSize:sz
+               toTexture:dst destinationSlice:ds destinationLevel:dl destinationOrigin:o];
+}
+
 - (void)copyFromTexture:(id<MTLTexture>)src sourceSlice:(NSUInteger)ss sourceLevel:(NSUInteger)sl
            sourceOrigin:(MTLOrigin)so sourceSize:(MTLSize)sz
               toTexture:(id<MTLTexture>)dst destinationSlice:(NSUInteger)ds destinationLevel:(NSUInteger)dl

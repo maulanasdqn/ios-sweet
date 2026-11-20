@@ -56,6 +56,9 @@ uint32_t sky_sampler_word(id<MTLSamplerState> s);
 BOOL sky_sampler_unnorm(id<MTLSamplerState> s);
 // bytes per pixel of the texture formats the Adreno path samples (0: none)
 NSUInteger sky_tex_bpe(MTLPixelFormat f);
+// one row of a w x h level: bytes in it and rows in the level (pixels, or
+// 4x4 blocks of 16 bytes for ASTC 4x4); NO for formats not served
+BOOL sky_tex_layout(MTLPixelFormat f, NSUInteger w, NSUInteger h, NSUInteger *rowBytes, NSUInteger *rows);
 
 // methods copied into the runtime-made _MTLDevice subclass
 @interface SkyDeviceMethods : NSObject

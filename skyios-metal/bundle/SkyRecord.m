@@ -280,25 +280,47 @@ NSUInteger sky_tex_bpe(MTLPixelFormat f) {
     }
 }
 
+static BOOL sky_tex_astc(MTLPixelFormat f) {
+    return f == MTLPixelFormatASTC_4x4_LDR || f == MTLPixelFormatASTC_4x4_sRGB;
+}
+
+BOOL sky_tex_layout(MTLPixelFormat f, NSUInteger w, NSUInteger h, NSUInteger *rowBytes, NSUInteger *rows) {
+    if (sky_tex_astc(f)) {
+        *rowBytes = (w + 3) / 4 * 16;
+        *rows = (h + 3) / 4;
+        return YES;
+    }
+    NSUInteger bpe = sky_tex_bpe(f);
+    *rowBytes = w * bpe;
+    *rows = h;
+    return bpe != 0;
+}
+
 // A 2D texture made without an IOSurface gets one, so it has GPU
 // memory to sample and render into (import_surface) and CPU memory for
 // replaceRegion: rows 64-byte aligned, as A6XX linear textures need.
+// ASTC 4x4 (CoreAnimation's compressed images, the wallpaper among them):
+// a surface of 16-byte elements, one per block.
 static IOSurfaceRef sky_tex_surface(MTLTextureDescriptor *d) {
-    NSUInteger bpe = sky_tex_bpe(d.pixelFormat);
+    BOOL astc = sky_tex_astc(d.pixelFormat);
+    NSUInteger bpe = astc ? 16 : sky_tex_bpe(d.pixelFormat);
     if (d.textureType != MTLTextureType2D || d.sampleCount > 1 || !bpe ||
         d.width == 0 || d.height == 0 || d.width > 8192 || d.height > 8192)
         return NULL;
     BOOL rgba = d.pixelFormat == MTLPixelFormatRGBA8Unorm || d.pixelFormat == MTLPixelFormatRGBA8Unorm_sRGB;
-    size_t bpr = (d.width * bpe + 63) & ~(size_t)63;
-    NSDictionary *p = @{
-        (id)kIOSurfaceWidth: @(d.width),
-        (id)kIOSurfaceHeight: @(d.height),
+    NSUInteger rowBytes, rows;
+    sky_tex_layout(d.pixelFormat, d.width, d.height, &rowBytes, &rows);
+    size_t bpr = (rowBytes + 63) & ~(size_t)63;
+    NSMutableDictionary *p = [@{
+        (id)kIOSurfaceWidth: @(astc ? rowBytes / 16 : d.width),
+        (id)kIOSurfaceHeight: @(rows),
         (id)kIOSurfaceBytesPerElement: @(bpe),
         (id)kIOSurfaceBytesPerRow: @(bpr),
-        (id)kIOSurfaceAllocSize: @(bpr * d.height),
-        (id)kIOSurfacePixelFormat: @(bpe == 1 ? 0x4c303038u : bpe == 2 ? 0x32433038u : bpe == 8 ? 0x52476841u
-                                     : rgba ? 0x52474241u : 0x42475241u),
-    };
+        (id)kIOSurfaceAllocSize: @(bpr * rows),
+    } mutableCopy];
+    if (!astc)
+        p[(id)kIOSurfacePixelFormat] = @(bpe == 1 ? 0x4c303038u : bpe == 2 ? 0x32433038u : bpe == 8 ? 0x52476841u
+                                         : rgba ? 0x52474241u : 0x42475241u);
     IOSurfaceRef s = IOSurfaceCreate((__bridge CFDictionaryRef)p);
     static int nlog;
     if (nlog++ < 8)
@@ -372,27 +394,31 @@ static IOSurfaceRef sky_tex_surface(MTLTextureDescriptor *d) {
     MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:f width:_width height:_height mipmapped:NO];
     return [[SkyTexture alloc] initWithDevice:_device descriptor:d surface:_surface plane:_plane];
 }
-// CPU uploads and readbacks for IOSurface-backed 4-byte textures (level 0
-// only); CA fills its layer and image textures this way
+// CPU uploads and readbacks for IOSurface-backed textures (level 0 only);
+// CA fills its layer and image textures this way. A region of an ASTC
+// texture is whole 4x4 blocks: rows of blocks, 16 bytes each.
 static BOOL sky_tex_rows(SkyTexture *t, IOSurfaceRef s, MTLRegion r, NSUInteger l, BOOL readOnly,
-                         uint8_t **base, size_t *sbpr) {
-    NSUInteger bpe = sky_tex_bpe(t.pixelFormat);
-    if (!s || l != 0 || !bpe || r.origin.x + r.size.width > IOSurfaceGetWidth(s) ||
-        r.origin.y + r.size.height > IOSurfaceGetHeight(s))
+                         uint8_t **base, size_t *sbpr, NSUInteger *rowBytes, NSUInteger *rows) {
+    BOOL astc = sky_tex_astc(t.pixelFormat);
+    NSUInteger bpe = astc ? 16 : sky_tex_bpe(t.pixelFormat);
+    NSUInteger x = astc ? r.origin.x / 4 : r.origin.x, y = astc ? r.origin.y / 4 : r.origin.y;
+    if (!s || l != 0 || !bpe || !sky_tex_layout(t.pixelFormat, r.size.width, r.size.height, rowBytes, rows) ||
+        x + *rowBytes / bpe > IOSurfaceGetWidth(s) || y + *rows > IOSurfaceGetHeight(s))
         return NO;
     if (IOSurfaceLock(s, readOnly ? kIOSurfaceLockReadOnly : 0, NULL) != kIOReturnSuccess)
         return NO;
     *sbpr = IOSurfaceGetBytesPerRow(s);
-    *base = (uint8_t *)IOSurfaceGetBaseAddress(s) + r.origin.y * *sbpr + r.origin.x * bpe;
+    *base = (uint8_t *)IOSurfaceGetBaseAddress(s) + y * *sbpr + x * bpe;
     return YES;
 }
 - (void)replaceRegion:(MTLRegion)r mipmapLevel:(NSUInteger)l withBytes:(const void *)b bytesPerRow:(NSUInteger)bpr {
     uint8_t *dst;
     size_t sbpr;
-    if (!b || !sky_tex_rows(self, _surface, r, l, NO, &dst, &sbpr))
+    NSUInteger rowBytes, rows;
+    if (!b || !sky_tex_rows(self, _surface, r, l, NO, &dst, &sbpr, &rowBytes, &rows))
         return;
-    for (NSUInteger y = 0; y < r.size.height; ++y)
-        memcpy(dst + y * sbpr, (const uint8_t *)b + y * bpr, r.size.width * sky_tex_bpe(_pixelFormat));
+    for (NSUInteger y = 0; y < rows; ++y)
+        memcpy(dst + y * sbpr, (const uint8_t *)b + y * bpr, rowBytes);
     IOSurfaceUnlock(_surface, 0, NULL);
 }
 - (void)replaceRegion:(MTLRegion)r mipmapLevel:(NSUInteger)l slice:(NSUInteger)s withBytes:(const void *)b bytesPerRow:(NSUInteger)bpr bytesPerImage:(NSUInteger)bpi {
@@ -402,10 +428,11 @@ static BOOL sky_tex_rows(SkyTexture *t, IOSurfaceRef s, MTLRegion r, NSUInteger 
 - (void)getBytes:(void *)b bytesPerRow:(NSUInteger)bpr fromRegion:(MTLRegion)r mipmapLevel:(NSUInteger)l {
     uint8_t *src;
     size_t sbpr;
-    if (!b || !sky_tex_rows(self, _surface, r, l, YES, &src, &sbpr))
+    NSUInteger rowBytes, rows;
+    if (!b || !sky_tex_rows(self, _surface, r, l, YES, &src, &sbpr, &rowBytes, &rows))
         return;
-    for (NSUInteger y = 0; y < r.size.height; ++y)
-        memcpy((uint8_t *)b + y * bpr, src + y * sbpr, r.size.width * sky_tex_bpe(_pixelFormat));
+    for (NSUInteger y = 0; y < rows; ++y)
+        memcpy((uint8_t *)b + y * bpr, src + y * sbpr, rowBytes);
     IOSurfaceUnlock(_surface, kIOSurfaceLockReadOnly, NULL);
 }
 - (void)getBytes:(void *)b bytesPerRow:(NSUInteger)bpr bytesPerImage:(NSUInteger)bpi fromRegion:(MTLRegion)r mipmapLevel:(NSUInteger)l slice:(NSUInteger)s {
@@ -419,6 +446,7 @@ static BOOL sky_tex_rows(SkyTexture *t, IOSurfaceRef s, MTLRegion r, NSUInteger 
 @end
 
 id sky_texture_from_buffer(id<MTLDevice> dev, MTLTextureDescriptor *d, id<MTLBuffer> buf, NSUInteger off, NSUInteger bpr) {
+    sky_log_once([NSString stringWithFormat:@"buffer texture fmt %lu", (unsigned long)d.pixelFormat]);
     SkyTexture *t = [[SkyTexture alloc] initWithDevice:dev descriptor:d surface:NULL plane:0];
     [t setSkyBuf:buf off:off bpr:bpr];
     return t;
@@ -611,6 +639,16 @@ id sky_render_encoder(id<MTLDevice> dev, MTLRenderPassDescriptor *d) {
     return [[SkyTexture alloc] initWithDevice:(id<MTLDevice>)self descriptor:d surface:s plane:plane];
 }
 - (id<MTLTexture>)newTextureWithBytesNoCopy:(const void *)p length:(NSUInteger)len descriptor:(MTLTextureDescriptor *)d deallocator:(void (^)(void *, NSUInteger))dealloc {
+    // the bytes copied into a GPU buffer (as newBufferWithBytesNoCopy),
+    // rows tightly packed
+    sky_log_once([NSString stringWithFormat:@"bytes texture fmt %lu %lux%lu len %lu", (unsigned long)d.pixelFormat,
+                                            (unsigned long)d.width, (unsigned long)d.height, (unsigned long)len]);
+    NSUInteger rowBytes, rows;
+    if (p && sky_tex_layout(d.pixelFormat, d.width, d.height, &rowBytes, &rows) && len >= rowBytes * rows) {
+        id<MTLBuffer> b = [(id<MTLDevice>)self newBufferWithBytes:p length:len options:0];
+        if (b)
+            return sky_texture_from_buffer((id<MTLDevice>)self, d, b, 0, rowBytes);
+    }
     return [[SkyTexture alloc] initWithDevice:(id<MTLDevice>)self descriptor:d surface:NULL plane:0];
 }
 - (NSUInteger)minimumLinearTextureAlignmentForPixelFormat:(MTLPixelFormat)f { return 64; }

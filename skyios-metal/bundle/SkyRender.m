@@ -486,6 +486,8 @@ static BOOL tex_format(MTLPixelFormat f, uint32_t *fmt, uint32_t *swap, uint32_t
     case MTLPixelFormatRG16Float: *fmt = 0x45; *swiz = SWZ(X, Y, ZERO, ONE); return YES;
     case MTLPixelFormatR32Float: *fmt = 0x4a; *swiz = SWZ(X, ZERO, ZERO, ONE); return YES;
     case MTLPixelFormatRGBA16Float: *fmt = 0x62; return YES;
+    case MTLPixelFormatASTC_4x4_sRGB: *srgb = YES; /* fallthrough */
+    case MTLPixelFormatASTC_4x4_LDR: *fmt = 0xc1; return YES; // FMT6_ASTC_4x4
     default: return NO;
     }
 #undef SWZ
@@ -800,7 +802,9 @@ static void load_ubos(NSMutableData *s, uint32_t op, uint32_t sb, const SkyProgU
     BOOL srgb;
     if (!t || !tex_format(t.pixelFormat, &fmt, &swap, &swiz, &srgb))
         return NO;
-    NSUInteger bpe = sky_tex_bpe(t.pixelFormat), w = t.width, h = t.height;
+    NSUInteger w = t.width, h = t.height, rowBytes, rows;
+    if (!sky_tex_layout(t.pixelFormat, w, h, &rowBytes, &rows))
+        return NO;
     uint64_t base = 0;
     NSUInteger bpr = 0;
     const uint8_t *cpu = NULL;
@@ -830,10 +834,10 @@ static void load_ubos(NSMutableData *s, uint32_t op, uint32_t sb, const SkyProgU
     }
     if (bpr & 63) {
         // A6XX linear pitch is 64-byte aligned: repack into upload memory
-        NSUInteger pitch = (w * bpe + 63) & ~(NSUInteger)63;
-        NSMutableData *tmp = [NSMutableData dataWithLength:pitch * h];
-        for (NSUInteger y = 0; cpu && y < h; y++)
-            memcpy((uint8_t *)tmp.mutableBytes + y * pitch, cpu + y * bpr, w * bpe);
+        NSUInteger pitch = (rowBytes + 63) & ~(NSUInteger)63;
+        NSMutableData *tmp = [NSMutableData dataWithLength:pitch * rows];
+        for (NSUInteger y = 0; cpu && y < rows; y++)
+            memcpy((uint8_t *)tmp.mutableBytes + y * pitch, cpu + y * bpr, rowBytes);
         if (surf)
             IOSurfaceUnlock(surf, kIOSurfaceLockReadOnly, NULL);
         base = [self upload:tmp.bytes length:tmp.length];
