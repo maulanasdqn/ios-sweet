@@ -107,6 +107,20 @@ localbuild/build60.log (path dxb->ci-clean2) and relinked with ci-clean2/build.l
   (BGRA10_XR) and the "no program" fbfetch variants are skipped, not causes. Next: route every
   emitted GPU address through a checked helper (log the site, drop the command buffer instead of
   faulting), and boot without the CCU waits to bisect.
+- **Real cause of the far-0 SMMU faults (observed):** `sky_alloc FAILED` right before each fault:
+  probe116 kIOReturnNoSpace (IOVA, fixed by 512 MiB), probe119 kIOReturnNoResources = the 320
+  buffer slots per client full (320 live maps at the fault). `upload:` then returned 0 and the
+  texture/sampler tables were loaded from gpu 0. Fixes: 696f5af (skip the draw when upload fails,
+  1 MiB upload chunks, index buffer 0 check) -> probe120: no fault, allocations still failing
+  (106 CA 64 KiB buffers + 14 full-screen surfaces = 320); xnu 0118 (4ee080a) 2048 slots, table
+  IOMalloc'd -> kernel k121 (ci-clean2 + SkyAdrenoAccel.cpp recompiled, Rust lib with 512 MiB).
+- **probe121 (k121 + bundle 696f5af, 23:50, observed):** no SMMU fault, no sky_alloc failure, no
+  "no upload memory"; only 37 skipped draws (fmt 550 BGRA10_XR); 52-54 swaps/s. User: opening
+  Control Center "freezes, touch does nothing": the GT9896 stopped sending frames right after the
+  CC swipe (`SWEET TOUCH` frames stuck at 212 from 2000 to 20000 polls, 0 errors); rendering kept
+  going. Same IC silence as the 0100s long-press (early-gpu.md), now for the whole boot. Next:
+  touch watchdog (no frame for N s -> GT9896 reset via TLMM + re-init), then the CC blur
+  (pixelated, "no program" fbfetch blend_function=54 variants) and format 550.
 - **`skyios-shim/out/shim-boot-skyios-gpu.img`** (2026-11-20 12:40): daily cmdline (no auto
   reboot, no sims) + `sweetmetal_procs=skyios-accel-test,backboardd` + kernel k93 + bundle of
   commit d668d2f: CoreAnimation on the GPU for normal use. Booted and left running.
