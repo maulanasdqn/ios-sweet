@@ -43,14 +43,16 @@ uint64_t sky_seq_submitted, sky_seq_completed;
 static SkyMem pool[POOL_MAX];
 static uint64_t pool_seq[POOL_MAX];
 static uint64_t pool_bytes;
+// small entries only: reusing a framebuffer-fetch scratch (11 MiB) through
+// the pool lost the lock screen text again (probe103), as a shared one did
 #define POOL_ENTRY_MAX (1ULL << 20)
 #define POOL_BYTES_MAX (8ULL << 20)
 static int pool_n;
 static os_unfair_lock pool_lock = OS_UNFAIR_LOCK_INIT;
 
 static uint64_t pool_size(uint64_t size) {
-    if (size > POOL_ENTRY_MAX)
-        return (size + 0x3fff) & ~0x3fffULL; // not pooled: no rounding up
+    if (size > (1ULL << 20))
+        return (size + 0x3fff) & ~0x3fffULL; // large: exact size, no rounding up
     uint64_t r = 65536;
     while (r < size)
         r <<= 1;
@@ -69,7 +71,8 @@ BOOL sky_alloc(uint64_t size, SkyMem *m) {
             pool[i] = pool[pool_n];
             pool_seq[i] = pool_seq[pool_n];
             os_unfair_lock_unlock(&pool_lock);
-            memset(m->cpu, 0, (size_t)size);
+            if (size <= (1ULL << 20)) // large reuses are scratch the GPU overwrites
+                memset(m->cpu, 0, (size_t)size);
             m->size = size;
             m->pool = want;
             return YES;
