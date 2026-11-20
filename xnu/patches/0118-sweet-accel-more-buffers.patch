@@ -1,0 +1,60 @@
+From: SkyIOS
+Subject: [PATCH] sweet: SkyAdrenoAccel 2048 buffers per client, table allocated
+
+backboardd ran out of the 320 slots in Settings and Control Center (probe119/120:
+sky_alloc -> kIOReturnNoResources). The table no longer fits in the client object.
+
+--- a/iokit/Kernel/arm/SkyAdrenoAccel.cpp
++++ b/iokit/Kernel/arm/SkyAdrenoAccel.cpp
+@@ -42,7 +42,7 @@
+ 
+ #define SKY_CHIP_ID     0x06010800ULL
+ #define SKY_USER_IOVA   0xc0000000ULL
+-#define SKY_MAX_BUFS    320
++#define SKY_MAX_BUFS    2048 /* 320 ran out in Settings/Control Center (probe119/120) */
+ #define SKY_MAX_SIZE    (32ULL << 20)
+ #define SKY_HANG_MS     3000
+ 
+@@ -132,7 +132,7 @@
+ 
+ 	task_t fTask;
+ 	IOLock *fLock;
+-	SkyBuf fBufs[SKY_MAX_BUFS];
++	SkyBuf *fBufs; /* SKY_MAX_BUFS entries, allocated: too big for the object */
+ 	bool fListMode; /* client names the surfaces a submit uses (selector 7) */
+ 
+ 	IOReturn alloc(uint64_t size, uint64_t *out);
+@@ -169,9 +169,12 @@
+ 	}
+ 	fTask = owningTask;
+ 	fLock = IOLockAlloc();
+-	bzero(fBufs, sizeof(fBufs));
++	fBufs = (SkyBuf *)IOMalloc(SKY_MAX_BUFS * sizeof(SkyBuf));
++	if (fBufs != NULL) {
++		bzero(fBufs, SKY_MAX_BUFS * sizeof(SkyBuf));
++	}
+ 	fListMode = false;
+-	return fLock != NULL;
++	return fLock != NULL && fBufs != NULL;
+ }
+ 
+ IOReturn
+@@ -495,7 +498,7 @@
+ SkyAdrenoAccelClient::clientClose(void)
+ {
+ 	IOLockLock(fLock);
+-	for (uint64_t h = 1; h <= SKY_MAX_BUFS; h++) {
++	for (uint64_t h = 1; fBufs != NULL && h <= SKY_MAX_BUFS; h++) {
+ 		if (fBufs[h - 1].md != NULL || fBufs[h - 1].surf != NULL) {
+ 			(void)release(h);
+ 		}
+@@ -511,6 +514,9 @@
+ 	if (fLock != NULL) {
+ 		IOLockFree(fLock);
+ 	}
++	if (fBufs != NULL) {
++		IOFree(fBufs, SKY_MAX_BUFS * sizeof(SkyBuf));
++	}
+ 	IOUserClient::free();
+ }
+ #endif
