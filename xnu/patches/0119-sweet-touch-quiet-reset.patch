@@ -1,0 +1,47 @@
+From: SkyIOS
+Subject: [PATCH] sweet: reset the GT9896 after 3 s without a frame
+
+The IC sometimes stops sending frames for the rest of the boot (probe121, after a
+Control Center swipe; I2C fine, event head 0). Reset it like at probe time once
+after 3 s of silence, then every 30 s while it stays quiet.
+
+--- a/bsd/dev/sweet_touch.c
++++ b/bsd/dev/sweet_touch.c
+@@ -602,7 +602,8 @@
+ 	printf("SWEET TOUCH: selected %s, 1080x2400, poll=10ms irq-hint=%d\n",
+ 	    goodix ? "GT9896 Yellowstone" : "Focaltech 54:52", st.irq_hint);
+ 	unsigned errors = 0, total_errors = 0, ticks = 0, stale = 0, stale_releases = 0;
+-	uint32_t seen_frames = 0;
++	unsigned quiet = 0, quiet_limit = 300, resets = 0;
++	uint32_t seen_frames = 0, quiet_frames = 0;
+ 	while (!st.dead) {
+ 		if (!st.irq_hint || st.active || !(touch_rd(st.gpio, TOUCH_GPIO_IO(9)) & 1u) ||
+ 		    (++ticks % 10u) == 0) {
+@@ -632,6 +633,27 @@
+ 			printf("SWEET TOUCH: no frame for 120 ms with a finger down; releasing (%u so far)\n",
+ 			    stale_releases);
+ 			touch_report(0, st.x, st.y);
++		}
++		/*
++		 * The GT9896 sometimes stops sending frames for good (probe121: none
++		 * after a Control Center swipe, I2C still fine, event head 0). It
++		 * cannot be told from an idle panel, so after 3 s without a frame
++		 * the IC is reset once, as at probe time; again every 30 s while it
++		 * stays quiet. A touch in the 300 ms reset window is lost.
++		 */
++		if (st.frames != quiet_frames) {
++			quiet_frames = st.frames;
++			quiet = 0;
++			quiet_limit = 300;
++		} else if (!st.active && ++quiet == quiet_limit) {
++			printf("SWEET TOUCH: no frame for %u s; resetting the IC (%u so far, %u frames)\n",
++			    quiet_limit / 100u, ++resets, st.frames);
++			quiet = 0;
++			quiet_limit = 3000;
++			touch_gpio(8, 0, 3, 3, true, false);
++			touch_wait(2);
++			touch_gpio(8, 0, 3, 3, true, true);
++			touch_wait(300);
+ 		}
+ 		if ((++st.polls % 1000u) == 0) {
+ 			printf("SWEET TOUCH: %u polls, %u frames, %u errors, head %#x, active %#x\n",
