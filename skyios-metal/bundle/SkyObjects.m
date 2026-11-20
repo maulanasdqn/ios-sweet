@@ -525,7 +525,7 @@ static uint32_t pkt7(uint32_t op, uint32_t cnt) {
 // perf: every 600 commits, the average CPU cost per commit of draws (SkyRender.m),
 // of commit itself, and the time between commits
 static void perf_commit(uint64_t commit_ticks, size_t bytes) {
-    extern uint64_t sky_perf_draw_ticks, sky_perf_draws;
+    extern uint64_t sky_perf_draw_ticks, sky_perf_draws, sky_perf_tex_ticks, sky_perf_fb_ticks;
     static uint64_t n, ticks, last, gap, sz;
     static mach_timebase_info_data_t tb;
     if (!tb.denom)
@@ -538,11 +538,12 @@ static void perf_commit(uint64_t commit_ticks, size_t bytes) {
     sz += bytes;
     if (++n == 600) {
         double us = (double)tb.numer / tb.denom / 1000.0;
-        sky_log("perf 600 commits: draws %llu (%.0f us each), per commit: draw %.0f us, commit %.0f us, gap %.0f us, %llu bytes",
+        sky_log("perf 600 commits: draws %llu (%.0f us each), per commit: draw %.0f us (tex %.0f, fb %.0f), commit %.0f us, gap %.0f us, %llu bytes",
                 sky_perf_draws, sky_perf_draws ? sky_perf_draw_ticks * us / sky_perf_draws : 0.0,
-                sky_perf_draw_ticks * us / n, ticks * us / n, gap * us / n, sz / n);
+                sky_perf_draw_ticks * us / n, sky_perf_tex_ticks * us / n, sky_perf_fb_ticks * us / n, ticks * us / n,
+                gap * us / n, sz / n);
         n = ticks = gap = sz = 0;
-        sky_perf_draw_ticks = sky_perf_draws = 0;
+        sky_perf_draw_ticks = sky_perf_draws = sky_perf_tex_ticks = sky_perf_fb_ticks = 0;
     }
 }
 

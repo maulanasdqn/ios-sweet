@@ -837,17 +837,23 @@ static void load_ubos(NSMutableData *s, uint32_t op, uint32_t sb, const SkyProgU
 // engine into memory freed with the command buffer (sampling the attachment
 // while drawing into it hung the GPU, probe84/85)
 - (uint64_t)fbCopy {
+    // one scratch per command buffer and size (probe100/101: a scratch shared
+    // by all frames lost the lock screen's text, cause not known yet)
     static const char key;
-    NSMutableArray<SkyUpload *> *all = objc_getAssociatedObject(_owner, &key);
-    if (!all) {
-        all = [NSMutableArray array];
-        objc_setAssociatedObject(_owner, &key, all, OBJC_ASSOCIATION_RETAIN);
+    NSMutableDictionary<NSNumber *, SkyUpload *> *scratch = objc_getAssociatedObject(_owner, &key);
+    if (!scratch) {
+        scratch = [NSMutableDictionary dictionary];
+        objc_setAssociatedObject(_owner, &key, scratch, OBJC_ASSOCIATION_RETAIN);
     }
-    SkyUpload *u = [SkyUpload new];
-    size_t size = (size_t)_rt.bpr * _h;
-    if (!sky_alloc((size + 4095) & ~(size_t)4095, &u->mem))
-        return 0;
-    [all addObject:u];
+    size_t size = ((size_t)_rt.bpr * _h + 4095) & ~(size_t)4095;
+    SkyUpload *up = scratch[@(size)];
+    if (!up) {
+        up = [SkyUpload new];
+        if (!sky_alloc(size, &up->mem))
+            return 0;
+        scratch[@(size)] = up;
+    }
+    const SkyMem *u = &up->mem;
     NSMutableData *s = _s;
     uint64_t ts = sky_code.iova + CODE_TS;
     wfi(s);
@@ -861,7 +867,7 @@ static void load_ubos(NSMutableData *s, uint32_t op, uint32_t sb, const SkyProgU
     reg1(s, 0x8c01, 0);                         // RB_A2D_PIXEL_CNTL
     uint32_t zero3[3] = {0, 0, 0};
     reg(s, 0x8c20, zero3, 3);
-    uint64_t src = _rt.iova + _rt.offset, dst = u->mem.iova;
+    uint64_t src = _rt.iova + _rt.offset, dst = u->iova;
     // TPL1_A2D_SRC_TEXTURE_INFO..: RGBA8 linear, size, base, pitch (as copyRows)
     uint32_t tex[5] = {fmt | (1 << 20) | (1 << 22), _w | (_h << 15), (uint32_t)src, (uint32_t)(src >> 32),
                        (uint32_t)(_rt.bpr >> 6) << 9};
@@ -887,7 +893,7 @@ static void load_ubos(NSMutableData *s, uint32_t op, uint32_t sb, const SkyProgU
 
 // a draw with a compiled CoreAnimation program (SkyPrograms.h)
 // perf: mach time spent in drawProg and draws, read by the commit log (SkyObjects.m)
-uint64_t sky_perf_draw_ticks, sky_perf_draws;
+uint64_t sky_perf_draw_ticks, sky_perf_draws, sky_perf_tex_ticks, sky_perf_fb_ticks;
 
 - (void)drawProg:(uint32_t)initiator count:(NSUInteger)n start:(NSUInteger)first index:(uint64_t)ibuf indexSize:(uint32_t)isz {
     uint64_t t0 = mach_absolute_time();
@@ -935,7 +941,11 @@ uint64_t sky_perf_draw_ticks, sky_perf_draws;
     for (uint32_t i = 0; i < e->ntex; i++) {
         uint32_t m = e->tex[i];
         if (m == SKY_TEX_FB) {
-            if (!fb && !(fb = [self fbCopy])) {
+            uint64_t tf = mach_absolute_time();
+            if (!fb)
+                fb = [self fbCopy];
+            sky_perf_fb_ticks += mach_absolute_time() - tf;
+            if (!fb) {
                 _skipped++;
                 return;
             }
@@ -947,7 +957,10 @@ uint64_t sky_perf_draw_ticks, sky_perf_draws;
             tex[i][5] = (uint32_t)(fb >> 32) | (1u << 17);
             continue;
         }
-        if (m >= 16 || ![self texDesc:tex[i] texture:_texs[m]]) {
+        uint64_t tt = mach_absolute_time();
+        BOOL ok = m < 16 && [self texDesc:tex[i] texture:_texs[m]];
+        sky_perf_tex_ticks += mach_absolute_time() - tt;
+        if (!ok) {
             if (_noProg++ < 6)
                 sky_log("draw skipped: texture slot %u (metal %u) fmt %lu (%s)", i, m,
                         m < 16 ? (unsigned long)_texs[m].pixelFormat : 0, p->name);
@@ -1641,9 +1654,26 @@ id sky_draw_encoder(id<MTLDevice> dev, MTLRenderPassDescriptor *d, NSMutableData
                   f == MTLPixelFormatRGBA8Unorm_sRGB;
     SkyImport rt = {0};
     BOOL cr = code_ready();
+    // a render target is flushed from the CPU caches once, on its first use:
+    // only the GPU writes it afterwards (flushing it on every submit cost
+    // ~1 ms each), but a new surface can hold dirty lines from its zero fill
+    // whose eviction would overwrite what the GPU drew (lock screen text went
+    // missing without any flush, probe100)
     BOOL imp = cr && surf && import_surface(surf, &rt);
-    if (imp)
-        note_surface(owner, &rt);
+    if (imp) {
+        static os_unfair_lock lock = OS_UNFAIR_LOCK_INIT;
+        static NSMutableSet<NSNumber *> *flushed;
+        os_unfair_lock_lock(&lock);
+        if (!flushed)
+            flushed = [NSMutableSet set];
+        NSNumber *sid = @(IOSurfaceGetID(surf));
+        BOOL first = ![flushed containsObject:sid];
+        if (first)
+            [flushed addObject:sid];
+        os_unfair_lock_unlock(&lock);
+        if (first)
+            note_surface(owner, &rt);
+    }
     if (!surf || !fmt_ok || !cr || !imp || (rt.bpr & 63)) {
         static int n;
         if (n++ < 40)
