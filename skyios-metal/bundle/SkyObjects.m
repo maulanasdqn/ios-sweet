@@ -454,6 +454,8 @@ static uint32_t pkt7(uint32_t op, uint32_t cnt) {
 }
 
 - (void)commit {
+    extern uint64_t sky_commits;
+    __atomic_add_fetch(&sky_commits, 1, __ATOMIC_RELAXED);
     [self enqueue];
     _t0 = sky_now();
     _status = MTLCommandBufferStatusCommitted;

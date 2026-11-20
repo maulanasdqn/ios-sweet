@@ -42,6 +42,18 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
 // is outside what it supports
 id sky_draw_encoder(id<MTLDevice> dev, MTLRenderPassDescriptor *d, NSMutableData *stream, id owner);
 
+// vertex descriptor of a render pipeline (MTLVertexFormat, byte offset and
+// buffer index per attribute; stride per buffer, 0: unused)
+typedef struct {
+    uint32_t fmt[8], off[8], buf[8];
+    uint32_t stride[31];
+} SkyVertexDesc;
+
+// MTLSamplerDescriptor -> A6XX_TEX_SAMP_0 (filters, wraps)
+uint32_t sky_sampler_word(id<MTLSamplerState> s);
+// bytes per pixel of the texture formats the Adreno path samples (0: none)
+NSUInteger sky_tex_bpe(MTLPixelFormat f);
+
 // methods copied into the runtime-made _MTLDevice subclass
 @interface SkyDeviceMethods : NSObject
 @end

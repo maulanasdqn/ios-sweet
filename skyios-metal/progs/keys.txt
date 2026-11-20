@@ -1,0 +1,54 @@
+# CoreAnimation pipelines seen on the device (vertex + fragment function keys)
+downsample_blur_vert_lph + downsample_4_frag_lph
+downsample_blur_vert_lph + downsample_8_frag_lph
+downsample_blur_vert_lph + narrow_blur_11_frag_lph
+downsample_blur_vert_lph + narrow_blur_15_frag_lph
+downsample_blur_vert_lph + narrow_blur_19_frag_lph
+downsample_blur_vert_lph + narrow_blur_23_frag_lph
+downsample_blur_vert_lph + narrow_blur_27_frag_lph
+downsample_blur_vert_lph + narrow_blur_7_frag_lph
+downsample_blur_vert_lph + single_pass_blur_3_lph
+fixed_vert_lph_spc + fixed_frag_lph_cph[attachment_count=1 blend_function=54 dest_count=1 framebuffer_fetch=1 image_count=1 image_function0=36 texture_function=17]
+fixed_vert_lph_spc + fixed_frag_lph_cph[attachment_count=1 blend_function=54 dest_count=1 framebuffer_fetch=1 image_count=1 image_function0=36 texture_function=18]
+fixed_vert_lph_spc + fixed_frag_lph_cph[attachment_count=1 blend_function=54 dest_count=1 framebuffer_fetch=1 image_count=1 image_function0=36 texture_function=49]
+fixed_vert_lph_spc + fixed_frag_lph_cph[attachment_count=1 blend_function=54 framebuffer_fetch=1 image_count=2 image_function0=15 image_function1=15 texture_function=7]
+fixed_vert_lph_spc + fixed_frag_lph_cph[attachment_count=1 blend_function=54 framebuffer_fetch=1]
+fixed_vert_lph_spc[texcoord_count0=1 texcoord_count1=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 coord_function0=5 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=2 image_function1=10 plane_count0=1 texcoord_count0=1 texcoord_count1=1 texture_function=5]
+fixed_vert_lph_spc[texcoord_count0=1 texcoord_count1=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 coord_function0=5 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=2 image_function1=11 plane_count0=1 texcoord_count0=1 texcoord_count1=1 texture_function=5]
+fixed_vert_lph_spc[texcoord_count0=1 texcoord_count1=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 framebuffer_fetch=1 has_image_0A=1 has_image_1A=1 has_lod_bias=1 image_count=2 image_function0=1 image_function1=29 plane_count0=1 plane_count1=1 texcoord_count0=1 texcoord_count1=1 texture_function=5]
+fixed_vert_lph_spc[texcoord_count0=1 texcoord_count1=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 framebuffer_fetch=1 has_image_0A=1 has_image_1A=1 has_lod_bias=1 image_count=2 plane_count0=1 plane_count1=1 texcoord_count0=1 texcoord_count1=1 texture_function=5]
+fixed_vert_lph_spc[texcoord_count0=1 texcoord_count1=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=2 image_function1=9 plane_count0=1 texcoord_count0=1 texcoord_count1=1 texture_function=5]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=46 dest_count=1 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 has_noise_scale=1 has_noise_tex=1 image_count=1 noise_width=32 plane_count0=1 texcoord_count0=1 texture_function=1]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=46 dest_count=1 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=1 image_function0=17 plane_count0=1 texcoord_count0=1 texture_function=1]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=46 dest_count=1 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=1 image_function0=17 plane_count0=1 texcoord_count0=1 texture_function=3]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=46 dest_count=1 framebuffer_fetch=1 image_count=1 image_function0=10 texcoord_count0=1 texture_function=3]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 coord_function0=5 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=1 image_function0=17 plane_count0=1 texcoord_count0=1 texture_function=1]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 coord_function0=5 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=1 image_function0=29 plane_count0=1 texcoord_count0=1 texture_function=1]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 coord_function0=5 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=1 image_function0=29 plane_count0=1 texcoord_count0=1 texture_function=3]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 coord_function0=5 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=1 image_function0=32 plane_count0=1 texcoord_count0=1 texture_function=3]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 coord_function0=5 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=1 plane_count0=1 texcoord_count0=1 texture_function=1]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 coord_function0=5 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=1 plane_count0=1 texcoord_count0=1 texture_function=3]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=1 image_function0=1 plane_count0=1 texcoord_count0=1 texture_function=1]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=1 image_function0=1 plane_count0=1 texcoord_count0=1 texture_function=3]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=1 image_function0=16 plane_count0=1 texcoord_count0=1 texture_function=3]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=1 image_function0=17 plane_count0=1 texcoord_count0=1 texture_function=1]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=1 image_function0=17 plane_count0=1 texcoord_count0=1 texture_function=3]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=1 image_function0=29 plane_count0=1 texcoord_count0=1 texture_function=1]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=1 image_function0=32 plane_count0=1 texcoord_count0=1 texture_function=1]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=1 image_function0=32 plane_count0=1 texcoord_count0=1 texture_function=3]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=1 plane_count0=1 texcoord_count0=1 texture_function=1]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=1 plane_count0=1 texcoord_count0=1 texture_function=2]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 framebuffer_fetch=1 has_image_0A=1 has_lod_bias=1 image_count=1 plane_count0=1 texcoord_count0=1 texture_function=3]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 framebuffer_fetch=1 image_count=1 image_function0=10 texcoord_count0=1 texture_function=3]
+fixed_vert_lph_spc[texcoord_count0=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 framebuffer_fetch=1 image_count=1 image_function0=11 texcoord_count0=1 texture_function=3]
+fixed_vert_lph_spc[texcoord_count1=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 coord_function1=4 dest_count=1 framebuffer_fetch=1 has_image_1A=1 has_lod_bias=1 image_count=2 image_function0=36 image_function1=28 plane_count1=1 texcoord_count1=1 texture_function=48]
+fixed_vert_lph_spc[vertex_layout=1] + fixed_frag_lph_cph[attachment_count=1 blend_function=54 framebuffer_fetch=1 texture_function=13 vertex_layout=1]
+path_blit_vert_lph + attachment_clear_frag_lph
+std_vert0_lph + harmony_lph
+std_vert0_lph + p3_clamp_lph
+std_vert1_lph + display_overdrive_lut_gen_lph
+std_vert1_lph + display_overdrive_srgb_sampler_lph
+std_vert1_lph + home_affordance_base_lph
+std_vert1_lph + inplace_copy_lph
+std_vert1_lph + luma_boost_lph
+variable_blur_vert_lph + variable_blur_frag_lph

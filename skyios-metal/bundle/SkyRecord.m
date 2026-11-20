@@ -111,15 +111,28 @@ static NSString *consts_string(MTLFunctionConstantValues *v) {
         // "name: fc_x; type: MTLDataTypeUChar; value: (2)", keep non-zero
         NSMutableArray *parts = [NSMutableArray array];
         NSRegularExpression *re = [NSRegularExpression
-            regularExpressionWithPattern:@"name: fc_([a-z0-9_]+); type: MTLDataType[A-Za-z0-9]+; value: \\(([^)]*)\\)"
+            regularExpressionWithPattern:@"name: fc_([A-Za-z0-9_]+); type: MTLDataType[A-Za-z0-9]+; value: \\(([^)]*)\\)"
                                  options:0
                                    error:NULL];
         NSString *text = [v description];
+        // debug: the whole dump of the first fragment-uber constant sets
+        // (constants set by index print without a name)
+        static int nraw;
+        if (nraw < 4 && [text containsString:@"blend_function"]) {
+            nraw++;
+            NSString *flat = [[text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet] componentsJoinedByString:@"|"];
+            for (NSUInteger off = 0; off < flat.length; off += 140)
+                sky_log("fcraw%d %s", nraw, [flat substringWithRange:NSMakeRange(off, MIN(140, flat.length - off))].UTF8String);
+        }
         for (NSTextCheckingResult *m in [re matchesInString:text options:0 range:NSMakeRange(0, text.length)]) {
             NSString *val = [[text substringWithRange:[m rangeAtIndex:2]] stringByReplacingOccurrencesOfString:@" " withString:@""];
             if (![val isEqualToString:@"0"] && ![val isEqualToString:@"0,0,0"])
                 [parts addObject:[NSString stringWithFormat:@"%@=%@", [text substringWithRange:[m rangeAtIndex:1]], val]];
         }
+        // sorted, as the offline program table (tools/air-spec/genprogs.py)
+        [parts sortUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
+            return [a compare:b options:NSLiteralSearch];
+        }];
         return [parts componentsJoinedByString:@" "];
     }
     NSMutableArray *parts = [NSMutableArray array];
@@ -187,6 +200,8 @@ static NSString *consts_string(MTLFunctionConstantValues *v) {
 @property (copy) NSString *key;
 @property (copy) NSString *vname, *fname; // function names (SkyRender.m looks for built-in code)
 @property (copy) NSString *fkey;          // fragment function key (name + constants)
+@property (copy) NSString *vkey;          // vertex function key
+@property SkyVertexDesc vdesc;
 @property uint32_t mrtControl, mrtBlend;  // RB_MRT[0].CONTROL / BLEND_CONTROL (SkyRender.m)
 @property (weak) id<MTLDevice> device;
 @end
@@ -208,9 +223,26 @@ static NSString *consts_string(MTLFunctionConstantValues *v) {
 
 @interface SkySampler : SkyObject <MTLSamplerState>
 @property (weak) id<MTLDevice> device;
+@property uint32_t samp0;
 @end
 @implementation SkySampler
 @end
+
+// MTLSamplerAddressMode -> a6xx_tex_clamp
+static uint32_t sky_wrap(MTLSamplerAddressMode m) {
+    switch (m) {
+    case MTLSamplerAddressModeRepeat: return 0;
+    case MTLSamplerAddressModeMirrorRepeat: return 2;
+    case MTLSamplerAddressModeMirrorClampToEdge: return 4;
+    case MTLSamplerAddressModeClampToZero:
+    case MTLSamplerAddressModeClampToBorderColor: return 3; // border colour table: zeros
+    default: return 1;                                      // clamp to edge
+    }
+}
+
+uint32_t sky_sampler_word(id<MTLSamplerState> s) {
+    return [s isKindOfClass:[SkySampler class]] ? ((SkySampler *)s).samp0 : 0x92a;
+}
 
 @interface SkyDepthStencil : SkyObject <MTLDepthStencilState>
 @property (weak) id<MTLDevice> device;
@@ -221,34 +253,46 @@ static NSString *consts_string(MTLFunctionConstantValues *v) {
 #pragma mark - textures
 
 // bytes per pixel of the formats the Adreno path samples and renders (0: none)
-static NSUInteger sky_tex_bpe(MTLPixelFormat f) {
+NSUInteger sky_tex_bpe(MTLPixelFormat f) {
     switch (f) {
+    case MTLPixelFormatA8Unorm:
+    case MTLPixelFormatR8Unorm:
+        return 1;
+    case MTLPixelFormatRG8Unorm:
+    case MTLPixelFormatR16Float:
+        return 2;
     case MTLPixelFormatBGRA8Unorm:
     case MTLPixelFormatBGRA8Unorm_sRGB:
     case MTLPixelFormatRGBA8Unorm:
     case MTLPixelFormatRGBA8Unorm_sRGB:
+    case MTLPixelFormatRG16Float:
+    case MTLPixelFormatR32Float:
         return 4;
+    case MTLPixelFormatRGBA16Float:
+        return 8;
     default:
         return 0;
     }
 }
 
-// A 2D 4-byte texture made without an IOSurface gets one, so it has GPU
+// A 2D texture made without an IOSurface gets one, so it has GPU
 // memory to sample and render into (import_surface) and CPU memory for
 // replaceRegion: rows 64-byte aligned, as A6XX linear textures need.
 static IOSurfaceRef sky_tex_surface(MTLTextureDescriptor *d) {
-    if (d.textureType != MTLTextureType2D || d.sampleCount > 1 || sky_tex_bpe(d.pixelFormat) != 4 ||
+    NSUInteger bpe = sky_tex_bpe(d.pixelFormat);
+    if (d.textureType != MTLTextureType2D || d.sampleCount > 1 || !bpe ||
         d.width == 0 || d.height == 0 || d.width > 8192 || d.height > 8192)
         return NULL;
     BOOL rgba = d.pixelFormat == MTLPixelFormatRGBA8Unorm || d.pixelFormat == MTLPixelFormatRGBA8Unorm_sRGB;
-    size_t bpr = (d.width * 4 + 63) & ~(size_t)63;
+    size_t bpr = (d.width * bpe + 63) & ~(size_t)63;
     NSDictionary *p = @{
         (id)kIOSurfaceWidth: @(d.width),
         (id)kIOSurfaceHeight: @(d.height),
-        (id)kIOSurfaceBytesPerElement: @4,
+        (id)kIOSurfaceBytesPerElement: @(bpe),
         (id)kIOSurfaceBytesPerRow: @(bpr),
         (id)kIOSurfaceAllocSize: @(bpr * d.height),
-        (id)kIOSurfacePixelFormat: @(rgba ? 0x52474241u : 0x42475241u),
+        (id)kIOSurfacePixelFormat: @(bpe == 1 ? 0x4c303038u : bpe == 2 ? 0x32433038u : bpe == 8 ? 0x52476841u
+                                     : rgba ? 0x52474241u : 0x42475241u),
     };
     IOSurfaceRef s = IOSurfaceCreate((__bridge CFDictionaryRef)p);
     static int nlog;
@@ -327,13 +371,14 @@ static IOSurfaceRef sky_tex_surface(MTLTextureDescriptor *d) {
 // only); CA fills its layer and image textures this way
 static BOOL sky_tex_rows(SkyTexture *t, IOSurfaceRef s, MTLRegion r, NSUInteger l, BOOL readOnly,
                          uint8_t **base, size_t *sbpr) {
-    if (!s || l != 0 || sky_tex_bpe(t.pixelFormat) != 4 || r.origin.x + r.size.width > IOSurfaceGetWidth(s) ||
+    NSUInteger bpe = sky_tex_bpe(t.pixelFormat);
+    if (!s || l != 0 || !bpe || r.origin.x + r.size.width > IOSurfaceGetWidth(s) ||
         r.origin.y + r.size.height > IOSurfaceGetHeight(s))
         return NO;
     if (IOSurfaceLock(s, readOnly ? kIOSurfaceLockReadOnly : 0, NULL) != kIOReturnSuccess)
         return NO;
     *sbpr = IOSurfaceGetBytesPerRow(s);
-    *base = (uint8_t *)IOSurfaceGetBaseAddress(s) + r.origin.y * *sbpr + r.origin.x * 4;
+    *base = (uint8_t *)IOSurfaceGetBaseAddress(s) + r.origin.y * *sbpr + r.origin.x * bpe;
     return YES;
 }
 - (void)replaceRegion:(MTLRegion)r mipmapLevel:(NSUInteger)l withBytes:(const void *)b bytesPerRow:(NSUInteger)bpr {
@@ -342,7 +387,7 @@ static BOOL sky_tex_rows(SkyTexture *t, IOSurfaceRef s, MTLRegion r, NSUInteger 
     if (!b || !sky_tex_rows(self, _surface, r, l, NO, &dst, &sbpr))
         return;
     for (NSUInteger y = 0; y < r.size.height; ++y)
-        memcpy(dst + y * sbpr, (const uint8_t *)b + y * bpr, r.size.width * 4);
+        memcpy(dst + y * sbpr, (const uint8_t *)b + y * bpr, r.size.width * sky_tex_bpe(_pixelFormat));
     IOSurfaceUnlock(_surface, 0, NULL);
 }
 - (void)replaceRegion:(MTLRegion)r mipmapLevel:(NSUInteger)l slice:(NSUInteger)s withBytes:(const void *)b bytesPerRow:(NSUInteger)bpr bytesPerImage:(NSUInteger)bpi {
@@ -355,7 +400,7 @@ static BOOL sky_tex_rows(SkyTexture *t, IOSurfaceRef s, MTLRegion r, NSUInteger 
     if (!b || !sky_tex_rows(self, _surface, r, l, YES, &src, &sbpr))
         return;
     for (NSUInteger y = 0; y < r.size.height; ++y)
-        memcpy((uint8_t *)b + y * bpr, src + y * sbpr, r.size.width * 4);
+        memcpy((uint8_t *)b + y * bpr, src + y * sbpr, r.size.width * sky_tex_bpe(_pixelFormat));
     IOSurfaceUnlock(_surface, kIOSurfaceLockReadOnly, NULL);
 }
 - (void)getBytes:(void *)b bytesPerRow:(NSUInteger)bpr bytesPerImage:(NSUInteger)bpi fromRegion:(MTLRegion)r mipmapLevel:(NSUInteger)l slice:(NSUInteger)s {
@@ -479,6 +524,7 @@ id sky_render_encoder(id<MTLDevice> dev, MTLRenderPassDescriptor *d) {
     p.vname = d.vertexFunction.name;
     p.fname = d.fragmentFunction.name;
     p.fkey = [(SkyFunction *)d.fragmentFunction key];
+    p.vkey = [(SkyFunction *)d.vertexFunction key];
     uint32_t ctl = 0, bl = 0;
     sky_blend_state(d.colorAttachments[0], &ctl, &bl);
     p.mrtControl = ctl;
@@ -489,6 +535,29 @@ id sky_render_encoder(id<MTLDevice> dev, MTLRenderPassDescriptor *d) {
                                        (unsigned long)c.sourceAlphaBlendFactor, (unsigned long)c.destinationAlphaBlendFactor,
                                        (unsigned long)c.writeMask];
     sky_log_once([NSString stringWithFormat:@"pipeline %@", p.key]);
+    MTLVertexDescriptor *vd = d.vertexDescriptor;
+    NSMutableString *vds = [NSMutableString stringWithFormat:@"vdesc %@:", [(SkyFunction *)d.vertexFunction key]];
+    for (NSUInteger i = 0; i < 8; i++) {
+        MTLVertexAttributeDescriptor *a = vd.attributes[i];
+        if (a.format)
+            [vds appendFormat:@" a%lu=f%lu@%lu/b%lu", (unsigned long)i, (unsigned long)a.format, (unsigned long)a.offset, (unsigned long)a.bufferIndex];
+    }
+    for (NSUInteger i = 0; i < 31; i++) {
+        MTLVertexBufferLayoutDescriptor *l = vd.layouts[i];
+        if (l.stride)
+            [vds appendFormat:@" l%lu=%lu/%lu", (unsigned long)i, (unsigned long)l.stride, (unsigned long)l.stepFunction];
+    }
+    sky_log_once(vds);
+    SkyVertexDesc v = {0};
+    for (NSUInteger i = 0; i < 8; i++) {
+        MTLVertexAttributeDescriptor *a = vd.attributes[i];
+        v.fmt[i] = (uint32_t)a.format;
+        v.off[i] = (uint32_t)a.offset;
+        v.buf[i] = (uint32_t)a.bufferIndex;
+    }
+    for (NSUInteger i = 0; i < 31; i++)
+        v.stride[i] = (uint32_t)vd.layouts[i].stride;
+    p.vdesc = v;
     return p;
 }
 - (id<MTLRenderPipelineState>)newRenderPipelineStateWithTileDescriptor:(MTLTileRenderPipelineDescriptor *)d
@@ -510,6 +579,9 @@ id sky_render_encoder(id<MTLDevice> dev, MTLRenderPassDescriptor *d) {
 - (id<MTLSamplerState>)newSamplerStateWithDescriptor:(MTLSamplerDescriptor *)d {
     SkySampler *s = [SkySampler new];
     s.device = (id<MTLDevice>)self;
+    // A6XX_TEX_SAMP_0: XY_MAG, XY_MIN, WRAP_S/T/R (one mip level only)
+    s.samp0 = ((uint32_t)d.magFilter << 1) | ((uint32_t)d.minFilter << 3) | (sky_wrap(d.sAddressMode) << 5) |
+              (sky_wrap(d.tAddressMode) << 8) | (sky_wrap(d.rAddressMode) << 11);
     return s;
 }
 - (id<MTLDepthStencilState>)newDepthStencilStateWithDescriptor:(MTLDepthStencilDescriptor *)d {
