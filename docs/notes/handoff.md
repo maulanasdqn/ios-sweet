@@ -55,6 +55,10 @@ localbuild/build60.log (path dxb->ci-clean2) and relinked with ci-clean2/build.l
   problem:** why reused scratch memory loses the lock text (offscreen targets of other sizes?
   stale TP cache?). Code is back to the probe104 scratch (fresh per command buffer, correct,
   ~52 fps).
+- **`skyios-shim/out/shim-boot-skyios-gpu.img`** (2026-11-20 12:40): daily cmdline (no auto
+  reboot, no sims) + `sweetmetal_procs=skyios-accel-test,backboardd` + kernel k93 + bundle of
+  commit d668d2f: CoreAnimation on the GPU for normal use. Booted and left running.
+  `shim-boot-skyios-daily.img` is still the software-CA fallback.
 - Kernel images for these probes: ci-clean2 + local recompiles (scratchpad k93 = 0109 slots 320
   + 0117). Recompile one file: flags line from localbuild/build60.log (dxb->ci-clean2), relink
   with ci-clean2/build.log line 3579660, `xcrun strip -x`.
