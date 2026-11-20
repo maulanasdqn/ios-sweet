@@ -173,6 +173,29 @@ compile(struct ir3_compiler *compiler, const char *path, mesa_shader_stage stage
    if (getenv("SKYPROG_NIR"))
       nir_print_shader(nir, stderr);
 
+   /* the sampler each texture is sampled through: ir3 gives a sampler
+    * prefetch the texture's index as its sampler (get_tex_samp_tex_src,
+    * info.samp_idx = tex->texture_index), one number in GL; here texture
+    * and sampler slots are numbered apart (air2glsl), so
+    * display_overdrive_srgb_sampler's tex1 (nearest, smp0) was prefetched
+    * through smp1 (linear). Same fix as HakiOS's fixPrefetchSamplers
+    * (hakios-metal/src/compiler.cpp, MIT). */
+   uint8_t samp_of[32];
+   memset(samp_of, 0xfe, sizeof(samp_of)); /* 0xfe unsampled, 0xff several */
+   nir_foreach_function_impl(impl, nir) {
+      nir_foreach_block(block, impl) {
+         nir_foreach_instr(instr, block) {
+            if (instr->type != nir_instr_type_tex)
+               continue;
+            nir_tex_instr *tex = nir_instr_as_tex(instr);
+            if (!nir_tex_instr_need_sampler(tex) || tex->texture_index >= 32)
+               continue;
+            uint8_t &s = samp_of[tex->texture_index];
+            s = s == 0xfe ? tex->sampler_index : s == tex->sampler_index ? s : 0xff;
+         }
+      }
+   }
+
    struct ir3_shader_options shader_opts = {};
    shader_opts.api_wavesize = IR3_SINGLE_OR_DOUBLE;
    shader_opts.real_wavesize = IR3_SINGLE_OR_DOUBLE;
@@ -182,6 +205,17 @@ compile(struct ir3_compiler *compiler, const char *path, mesa_shader_stage stage
    if (!v || !v->bin) {
       fprintf(stderr, "skyprog: ir3 compile failed for %s\n", path);
       exit(1);
+   }
+   for (unsigned i = 0; i < v->num_sampler_prefetch; i++) {
+      struct ir3_sampler_prefetch *p = &v->sampler_prefetch[i];
+      if (p->bindless || p->tex_id >= 32 || samp_of[p->tex_id] == 0xfe)
+         continue;
+      if (samp_of[p->tex_id] == 0xff) {
+         fprintf(stderr, "skyprog: %s prefetches texture %u, sampled through several samplers\n",
+                 path, p->tex_id);
+         exit(1);
+      }
+      p->samp_id = samp_of[p->tex_id];
    }
    return v;
 }
