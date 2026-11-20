@@ -67,8 +67,14 @@ localbuild/build60.log (path dxb->ci-clean2) and relinked with ci-clean2/build.l
   fixPrefetchSamplers (commit 7e9a730). Only display_overdrive_srgb_sampler changed (tex1 was read
   through the linear sampler instead of nearest). Their other finding (dsx.f16 returns the y
   derivative) does not apply here: air2glsl emits half as 32-bit float.
-- Pixelation report (user: app open/close, app switcher, blur, static text/icons): not reproduced;
-  probe109/110 full-res crops are sharp. Needs a photo from the user.
+- Pixelation report: the user later said they probably misread it ("salah liat"); probe109/110
+  full-res crops are sharp. Closed.
+- **Wallpaper black on the GPU path (probe109/110 shots, lock + home):** backboardd skipped every
+  draw of an ASTC_4x4_LDR (fmt 204) image (`draw skipped: texture slot 0 (metal 3) fmt 204`, skyp29/
+  skyp30). Wallpaper worked in software CA (daily3, 2026-11-16). Commit 43d9f08 adds ASTC 4x4
+  (FMT6_ASTC_4x4 0xc1, block-row pitch, block surfaces, bytes-no-copy and buffer->texture uploads,
+  new one-time logs `buffer texture fmt`, `bytes texture fmt`, `blit buffer->texture fmt` to see
+  which path CA uses). probe111 image rebuilt with it (+ the CCU wait); not booted yet.
 - **`skyios-shim/out/shim-boot-skyios-gpu.img`** (2026-11-20 12:40): daily cmdline (no auto
   reboot, no sims) + `sweetmetal_procs=skyios-accel-test,backboardd` + kernel k93 + bundle of
   commit d668d2f: CoreAnimation on the GPU for normal use. Booted and left running.
