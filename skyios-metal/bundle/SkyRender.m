@@ -600,7 +600,8 @@ void sky_blend_state(MTLRenderPipelineColorAttachmentDescriptor *c, uint32_t *co
     SkyUpload *u = all.lastObject;
     if (!u || u->used + len > u->mem.size) {
         u = [SkyUpload new];
-        size_t size = MAX(len, 65536);
+        // big chunks: every chunk is one of the kernel's 320 buffers per client
+        size_t size = MAX(len, 1 << 20);
         if (!sky_alloc(size, &u->mem))
             return 0;
         u->mem.size = size;
@@ -1006,6 +1007,22 @@ uint64_t sky_perf_draw_ticks, sky_perf_draws, sky_perf_tex_ticks, sky_perf_fb_ti
         samp[i][1] = unnorm ? 1u << 5 : 0;
     }
 
+    // texture and sampler tables: upload memory can run out (the kernel's
+    // 320 buffers per client, probe116/119), and a table at gpu 0 is an SMMU
+    // fault that stops the GPU for good
+    uint64_t ta = 0, sa = 0;
+    if (e->ntex) {
+        ta = [self upload:tex length:e->ntex * 64];
+        sa = [self upload:samp length:nsamp * 16];
+        if (!ta || !sa) {
+            static int nlog;
+            if (nlog++ < 6)
+                sky_log("draw skipped: no upload memory for texture tables (%s)", p->name);
+            _skipped++;
+            return;
+        }
+    }
+
     NSMutableData *s = _s;
     if (_draws)
         wfi(s);
@@ -1082,8 +1099,6 @@ uint64_t sky_perf_draw_ticks, sky_perf_draws, sky_perf_tex_ticks, sky_perf_fb_ti
     load_consts(s, 0x34, 0xc, p->fs_imm_base / 4, p->fs_imm, p->fs_imm_dwords / 4);
     // textures and samplers
     if (e->ntex) {
-        uint64_t ta = [self upload:tex length:e->ntex * 64];
-        uint64_t sa = [self upload:samp length:nsamp * 16];
         emit(s, pkt7(0x34, 3)); // samplers: ST6_SHADER, SB6_FS_TEX
         emit(s, (2 << 16) | (4 << 18) | (nsamp << 22));
         emit(s, (uint32_t)sa);
@@ -1287,6 +1302,10 @@ uint64_t sky_perf_draw_ticks, sky_perf_draws, sky_perf_tex_ticks, sky_perf_fb_ti
     // SOURCE_SELECT=0 (DMA/indexed), VIS_CULL=1 (USE_VISIBILITY), INDEX_SIZE
     uint32_t initiator = prim | (0 << 6) | (1 << 8) | (idxSize << 10);
 
+    if (!indexBuffer.gpuAddress) {
+        _skipped++;
+        return;
+    }
     if (_prog || [_vname hasPrefix:@"fixed_vert"] || [_vname hasPrefix:@"std_vert"]) {
         [self drawProg:initiator count:indexCount start:0 index:indexBuffer.gpuAddress + indexBufferOffset
              indexSize:indexType == MTLIndexTypeUInt32 ? 4 : 2];
