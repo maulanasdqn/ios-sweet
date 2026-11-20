@@ -13,7 +13,9 @@ const CP_INDIRECT_BUFFER: u32 = 0x3f;
 const CP_SET_PROTECTED_MODE: u32 = 0x5f;
 
 const USER_IOVA: u64 = 0xc000_0000;
-const USER_L3: usize = 64; // 64 L3 tables = 128 MiB of user buffers
+// 256 L3 tables = 512 MiB of user buffers (128 MiB ran out in Settings,
+// probe116: 105 MiB live, map -> 0, SMMU fault at far 0)
+const USER_L3: usize = 256;
 const USER_PAGES: usize = USER_L3 * 512;
 const IB_MAX_DWORDS: u32 = 0x000f_ffff;
 
@@ -68,16 +70,25 @@ const L3_CHUNKS: usize = USER_L3 * PAGE / CHUNK;
 // Page tables for the user slot, allocated as single XNU pages: a 65-page
 // contiguous allocation after boot (0111d/0111e) hung the whole phone,
 // presumably in kmem_alloc_contig's scan of fragmented memory.
+// The L3 chunks and the page bitmap live in statics: with 512 MiB they are
+// too big for the 16 KiB kernel stack the open path runs on (probe118:
+// "Invalid kernel stack pointer (probable overflow)" in backboardd).
+static mut L3: [Option<Dma>; L3_CHUNKS] = [const { None }; L3_CHUNKS];
+static mut USED: [u64; USER_PAGES / 64] = [0; USER_PAGES / 64];
+
 pub struct Tables {
     l2: Dma,
-    l3: [Option<Dma>; L3_CHUNKS],
+    l3: &'static mut [Option<Dma>; L3_CHUNKS],
 }
 
 impl Tables {
+    // called once (user open is guarded by OPEN)
     fn alloc() -> Option<Tables> {
-        let mut t = Tables { l2: Dma::alloc(CHUNK)?, l3: [const { None }; L3_CHUNKS] };
+        let t = Tables { l2: Dma::alloc(CHUNK)?, l3: unsafe { &mut *core::ptr::addr_of_mut!(L3) } };
         for c in t.l3.iter_mut() {
-            *c = Some(Dma::alloc(CHUNK)?);
+            if c.is_none() {
+                *c = Some(Dma::alloc(CHUNK)?);
+            }
         }
         Some(t)
     }
@@ -104,7 +115,7 @@ impl Tables {
 
 pub struct User {
     pt: Tables,
-    used: [u64; USER_PAGES / 64],
+    used: &'static mut [u64; USER_PAGES / 64],
 }
 
 impl User {
@@ -189,7 +200,9 @@ impl Engine {
             USER_PAGES * PAGE >> 20,
             g.read(CP_PROTECT_CNTL)
         );
-        self.user = Some(User { pt, used: [0; USER_PAGES / 64] });
+        let used = unsafe { &mut *core::ptr::addr_of_mut!(USED) };
+        used.fill(0);
+        self.user = Some(User { pt, used });
         true
     }
 

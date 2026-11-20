@@ -259,6 +259,12 @@ static void wallpaperkit_probe(void) {
 // sizes), to see where poster configurations and snapshots live
 static void fs_probe(void) {
     NSFileManager *fm = [NSFileManager defaultManager];
+    // the legacy wallpaper files and inject()'s backups of them
+    list_sb(@"fsprobe");
+    NSString *bkroot = @"/private/var/mobile/Library/SpringBoard.sweet-legacy-wallpaper";
+    for (NSString *d in [fm contentsOfDirectoryAtPath:bkroot error:nil])
+        say(@"legacy backup %@: %@", d,
+            [[fm contentsOfDirectoryAtPath:[bkroot stringByAppendingPathComponent:d] error:nil] componentsJoinedByString:@" "]);
     // the PosterBoard data store of the legacy and the collections poster
     NSString *store = @"/private/var/mobile/Library/Application Support/PRBPosterExtensionDataStore";
     say(@"store: %@", [[fm contentsOfDirectoryAtPath:store error:nil] componentsJoinedByString:@" "]);
@@ -399,6 +405,8 @@ static void write_snapshots(void) {
 #define LAUNCHD_PLIST @"/System/Library/xpc/launchd.plist"
 #define PBFIX_DYLIB @"/usr/lib/skyios/SkyPBFix.dylib"
 
+static void restore_legacy(void);
+
 static void inject(void) {
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *old = [LAUNCHD_PLIST stringByAppendingString:@".sweet-old"];
@@ -427,7 +435,13 @@ static void inject(void) {
     NSData *out = [NSPropertyListSerialization dataWithPropertyList:pl format:fmt options:0 error:nil];
     BOOL ok = found && [out writeToFile:LAUNCHD_PLIST atomically:YES];
     say(@"launchd.plist: %d SpringBoard job(s), written %d (format %lu)", found, ok, (unsigned long)fmt);
-    // newest legacy wallpaper backup back in place
+    restore_legacy();
+}
+
+// newest legacy wallpaper backup back in place (the files vanished from
+// SpringBoard's directory between Nov 16 and 20: black wallpaper, probe116)
+static void restore_legacy(void) {
+    NSFileManager *fm = [NSFileManager defaultManager];
     NSString *bkroot = @"/private/var/mobile/Library/SpringBoard.sweet-legacy-wallpaper";
     NSString *newest = nil;
     for (NSString *d in [fm contentsOfDirectoryAtPath:bkroot error:nil])
@@ -538,6 +552,9 @@ int main(int argc, char **argv, char **envp, char **apple) {
             }
         } else if ([mode isEqualToString:@"inject"]) {
             inject();
+        } else if ([mode isEqualToString:@"restore"]) {
+            restore_legacy();
+            list_sb(@"restored");
         } else if ([mode isEqualToString:@"uninject"]) {
             uninject();
         } else if ([mode isEqualToString:@"snap"]) {

@@ -84,6 +84,19 @@ localbuild/build60.log (path dxb->ci-clean2) and relinked with ci-clean2/build.l
   backboardd draws nothing (console text) -> the accelerator is required. daily3 (2026-11-16, user
   saw the wallpaper) had `sweetautobahn=1`, kernel build69, no sweetaccel. Open: why the poster image
   never reaches the screen; asked the user whether their wallpaper is red-dominant.
+- **probe115-119 (2026-11-20 22:54-23:25):** 115 = payload-daily3 (build69, its cmdline) + reboot/shots:
+  wallpaper black too (user, shot) and touch dead -> not a kernel/GPU regression. 116 (k109, GPU,
+  `posterwall fsprobe`): `/var/mobile/Library/SpringBoard` had NO LockBackground.cpbitmap /
+  OriginalLockBackground.cpbitmap / thumbnails; complete backup in `SpringBoard.sweet-legacy-wallpaper/89`.
+  117 (`posterwall restore`, new mode = inject's file copy only): all 4 files restored (observed).
+  Wallpaper after restore not yet seen (needs the next boot).
+  **Settings glitch (user photos, 116/117):** SMMU fault far 0x0 at a fence -> GPU present disabled,
+  all draws skipped afterwards (ghosted / stale layers). Cause: the 128 MiB user IOVA window was
+  full (105 MiB live, peak 124 MiB; ~5 full-screen 11 MB surfaces) -> map returned 0. Kernel
+  cpuser.rs USER_L3 64 -> 256 (512 MiB). probe118 (k118) panicked: "Invalid kernel stack pointer"
+  in backboardd (the 16 KiB bitmap + L3 array went through the stack in user open) -> both moved
+  to statics, kernel k119 (scratchpad), image `shim-boot-probe119.img`, NOT booted yet: the phone
+  hung on the probe118 panic screen (no USB), needs a manual reset.
 - **`skyios-shim/out/shim-boot-skyios-gpu.img`** (2026-11-20 12:40): daily cmdline (no auto
   reboot, no sims) + `sweetmetal_procs=skyios-accel-test,backboardd` + kernel k93 + bundle of
   commit d668d2f: CoreAnimation on the GPU for normal use. Booted and left running.
