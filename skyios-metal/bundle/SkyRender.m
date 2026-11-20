@@ -273,7 +273,7 @@ static BOOL import_surface(IOSurfaceRef s, SkyImport *out) {
     static os_unfair_lock lock = OS_UNFAIR_LOCK_INIT;
     static NSMutableDictionary<NSNumber *, NSData *> *cache;
     static NSMutableDictionary<NSNumber *, NSNumber *> *used; // surface -> commit count at last use
-    enum { MAX_IMPORTS = 20 };
+    enum { MAX_IMPORTS = 200 }; // kernel: 320 buffer slots per client
     uint32_t sid = IOSurfaceGetID(s);
     os_unfair_lock_lock(&lock);
     if (!cache) {

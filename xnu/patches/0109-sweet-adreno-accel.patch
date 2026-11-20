@@ -45,7 +45,7 @@
 +
 +#define SKY_CHIP_ID     0x06010800ULL
 +#define SKY_USER_IOVA   0xc0000000ULL
-+#define SKY_MAX_BUFS    64
++#define SKY_MAX_BUFS    320 /* x 40 bytes: the client object stays under 16 KiB */
 +#define SKY_MAX_SIZE    (32ULL << 20)
 +#define SKY_HANG_MS     3000
 +
