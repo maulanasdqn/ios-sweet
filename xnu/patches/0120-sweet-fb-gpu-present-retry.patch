@@ -1,0 +1,36 @@
+From: SkyIOS
+Subject: [PATCH] sweet: keep the GPU present after a single failed copy
+
+With CoreAnimation on the GPU, a present could find the engine busy with a user
+submission; one failure turned the GPU present off for the boot (probe123, frame
+5001). Copy that frame with the CPU and turn it off only after 8 in a row.
+
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -63,7 +63,7 @@
+ /* GPU present state, used under fPresentLock only */
+ static uint64_t sweet_fb_gpu_segs[SWEET_FB_GPU_SEGS][2];
+ static int sweet_fb_gpu_mode = -1;      /* -1 unknown, 0 off, 1 on */
+-static uint32_t sweet_fb_gpu_frames, sweet_fb_gpu_checked;
++static uint32_t sweet_fb_gpu_frames, sweet_fb_gpu_checked, sweet_fb_gpu_fails;
+ static SweetSurface *sweet_fb_gpu_inflight;  /* source of the queued GPU copy */
+ 
+ class IOMobileFramebuffer : public IOService {
+@@ -541,12 +541,17 @@
+ 	if (!sweet_rs_gpu_blit(sweet_fb_gpu_segs, nseg, s->offset, s->bytesPerRow, (uint32_t)sx,
+ 	    (uint32_t)sy, (uint32_t)w, (uint32_t)h, fPhys, (uint64_t)fRowBytes * fHeight, fRowBytes,
+ 	    (uint32_t)dx, (uint32_t)dy, check || sweet_fb_gpu_mode == 2)) {
++		/* one failure may be a busy engine: this frame by CPU, off after 8 in a row */
++		if (++sweet_fb_gpu_fails < 8) {
++			return false;
++		}
+ 		IOLog("SWEET FB: GPU present failed after %u frames (%u segs), CPU copy from now on\n",
+ 		    sweet_fb_gpu_frames, nseg);
+ 		sweet_fb_gpu_mode = 0;
+ 		OSSafeReleaseNULL(sweet_fb_gpu_inflight);
+ 		return false;
+ 	}
++	sweet_fb_gpu_fails = 0;
+ 	uint64_t t2 = mach_absolute_time();
+ 	/* the call waited for the previous copy, so its source can go */
+ 	OSSafeReleaseNULL(sweet_fb_gpu_inflight);

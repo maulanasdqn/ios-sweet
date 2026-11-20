@@ -832,8 +832,10 @@ pub extern "C" fn sweet_rs_gpu_blit(
     if segs.is_null() || nseg == 0 || w == 0 || h == 0 || w > 0x3000 || h > 0x3000 {
         return false;
     }
-    if BUSY.swap(true, Ordering::Acquire) {
-        return false;
+    // wait for a user submission holding the engine (as sweet_rs_gpu_wait):
+    // failing here turned the GPU present off for the boot (probe123)
+    while BUSY.swap(true, Ordering::Acquire) {
+        core::hint::spin_loop();
     }
     let ok = blit_locked(unsafe { core::slice::from_raw_parts(segs, nseg as usize) }, off, spitch, sx, sy, w, h, panel_pa, panel_size, dpitch, dx, dy, sync);
     BUSY.store(false, Ordering::Release);
@@ -949,8 +951,10 @@ pub extern "C" fn sweet_rs_gpu_compose(
     if segs.is_null() || nseg == 0 || sw == 0 || sh == 0 || dw == 0 || dh == 0 {
         return false;
     }
-    if BUSY.swap(true, Ordering::Acquire) {
-        return false;
+    // wait for a user submission holding the engine (as sweet_rs_gpu_wait):
+    // failing here turned the GPU present off for the boot (probe123)
+    while BUSY.swap(true, Ordering::Acquire) {
+        core::hint::spin_loop();
     }
     let ok = compose_locked(unsafe { core::slice::from_raw_parts(segs, nseg as usize) }, off, spitch, sw, sh, panel_pa, panel_size, dpitch, dw, dh, sync);
     BUSY.store(false, Ordering::Release);
