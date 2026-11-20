@@ -31,11 +31,29 @@ ci-clean2 with SkyAdrenoAccel.cpp/SweetFramebuffer.cpp recompiled by the flags l
 localbuild/build60.log (path dxb->ci-clean2) and relinked with ci-clean2/build.log line
 3579660; stripped kernels in the session scratchpad k90/k91).
 
-**Frame rate (observed):** 10.4 swaps/s in both software and GPU CA, while the vsync
-timer runs at 60 Hz. backboardd never calls our notification selector 72, so it gets no
-vsync. probe91 logs which selectors register async callbacks (`SWEET FB: ... async sel`).
-Next: deliver vsync/swap-complete on that selector -> 60 fps; then cut per-draw cost
-(full state + wfi per draw, flushAll of every imported surface per submit).
+**Frame rate (observed, probes 91-105):**
+- 10.4 swaps/s came from a missing IOMFB property: QuartzCore paces itself from
+  `IOMFBDisplayRefresh` {displayMinRefreshInterval, displayRefreshStepMachTime} (mach time).
+  Kernel patch 0117 publishes it (16.667 ms) -> probe92: 39 swaps/s. (backboardd never
+  enables vsync notifications, selector 72 = EnableNotifications per the dyld cache's
+  IOMobileFramebuffer; no async selectors are used.)
+- 0117 also adds SkyAdrenoAccel selector 7: submit flushing the allocations + only the listed
+  surfaces (flushAll cleaned every imported surface on every submit and wait) -> 54 swaps/s.
+- Driver: per-pipeline program cache, CP3D_STATE/program regs as pre-packed packets, no per-draw
+  debug, small completion-gated allocation pool (<=1 MiB entries, 8 MiB; an unbounded pool ran the
+  128 MiB GPU address space out -> imports kIOReturnNoSpace -> skipped draws, broken pictures in
+  probe94/97), render targets flushed once. perf counters (`perf 600 commits` log line).
+- **probe104 (current correct state, commit 7e08f7f): lock + home screen correct, 51-54
+  swaps/s, ~625 us per draw of which ~5.4 ms per commit is the framebuffer-fetch scratch
+  (fresh 11 MB allocation per command buffer).** probe100 (scratch shared by all frames):
+  60.0 swaps/s, 74 us per draw, backboardd ~65% CPU, but the lock screen clock/date text was
+  missing; probe103 (scratch reused through the gated pool): text missing too. probe105 tests
+  whether the 2D copy writes anything at all (shared scratch zeroed before the copy).
+- Kernel images for these probes: ci-clean2 + local recompiles (scratchpad k93 = 0109 slots 320
+  + 0117). Recompile one file: flags line from localbuild/build60.log (dxb->ci-clean2), relink
+  with ci-clean2/build.log line 3579660, `xcrun strip -x`.
+- Boot flakiness (observed): some boots stop at console text (probe91a, 103a) and some write
+  only 2 SWEETLOG flushes (96, 101, 104a); re-running the same image works.
 
 ### >>> HANDOFF 2026-11-19 (session 15): clean local build, probe66 <<<
 
