@@ -47,8 +47,14 @@ localbuild/build60.log (path dxb->ci-clean2) and relinked with ci-clean2/build.l
   swaps/s, ~625 us per draw of which ~5.4 ms per commit is the framebuffer-fetch scratch
   (fresh 11 MB allocation per command buffer).** probe100 (scratch shared by all frames):
   60.0 swaps/s, 74 us per draw, backboardd ~65% CPU, but the lock screen clock/date text was
-  missing; probe103 (scratch reused through the gated pool): text missing too. probe105 tests
-  whether the 2D copy writes anything at all (shared scratch zeroed before the copy).
+  missing; probe103 (scratch reused through the gated pool): text missing too. probe105 (shared
+  scratch zero-filled by the 2D engine before the copy): text present; probe106 (zero scratch,
+  no copy): black screen, 59.5 swaps/s, 80 us/draw, backboardd ~48% -> the copy is needed and
+  works for full-screen targets; probe107 (shared scratch + GRAS_A2D_SCISSOR set to the full
+  target): 60.0 swaps/s, home screen correct, lock screen clock text missing again. **Open
+  problem:** why reused scratch memory loses the lock text (offscreen targets of other sizes?
+  stale TP cache?). Code is back to the probe104 scratch (fresh per command buffer, correct,
+  ~52 fps).
 - Kernel images for these probes: ci-clean2 + local recompiles (scratchpad k93 = 0109 slots 320
   + 0117). Recompile one file: flags line from localbuild/build60.log (dxb->ci-clean2), relink
   with ci-clean2/build.log line 3579660, `xcrun strip -x`.

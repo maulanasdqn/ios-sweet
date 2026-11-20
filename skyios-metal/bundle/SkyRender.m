@@ -837,8 +837,12 @@ static void load_ubos(NSMutableData *s, uint32_t op, uint32_t sb, const SkyProgU
 // engine into memory freed with the command buffer (sampling the attachment
 // while drawing into it hung the GPU, probe84/85)
 - (uint64_t)fbCopy {
-    // one scratch per command buffer and size (probe100/101: a scratch shared
-    // by all frames lost the lock screen's text, cause not known yet)
+    // one scratch per command buffer and size, fresh (zero) memory each time.
+    // Reusing scratch memory (shared by all frames, probe100/107, or through
+    // the pool, probe103) loses the lock screen's clock text although the copy
+    // works (a zeroed scratch without the copy gives a black screen, probe106,
+    // and a full 2D scissor did not help, probe107): unexplained. Costs ~5 ms
+    // of CPU per command buffer (allocation), the gap to 60 fps.
     static const char key;
     NSMutableDictionary<NSNumber *, SkyUpload *> *scratch = objc_getAssociatedObject(_owner, &key);
     if (!scratch) {
