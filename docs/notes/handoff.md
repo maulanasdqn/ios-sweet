@@ -135,6 +135,15 @@ localbuild/build60.log (path dxb->ci-clean2) and relinked with ci-clean2/build.l
   - **Daily image rebuilt:** `skyios-shim/out/shim-boot-skyios-gpu.img` = k124 (scratchpad) +
     bundle of c37ed59 in the ramdisk + the old daily cmdline + `sweetautobahn=1` (no reboot/sims/
     shots). Previous one kept in the session scratchpad.
+- **Touch still flaky on the daily (user, 2026-11-21 00:50), live log via the old usbnet process
+  (pid 74260 since Nov 19, writes logs/live-skyios-daily-1119.txt; no reboot needed):** after an
+  unlock swipe the IC sent no frame for minutes; 3 s/30 s resets did not bring it back then.
+  xnu 0121 (k125): the watchdog logs PID/head/INT. probe125 (10 min): PID always "9896", head all
+  0, INT high, SE idle -> **the IC is alive and simply reports nothing**; the controller is fine.
+  15 of 42 touches ended by the 120 ms stale release (the IC often sends no lift frame).
+  After 1635 frames no more frames for 7 min (not known whether the user still touched).
+  Daily image rebuilt with k125 (01:13). Render: 52-57 swaps/s while animating; the gap to 60 is
+  probably the per-commit framebuffer-fetch copy (~6.5 ms) + scratch allocation (~5 ms CPU).
   - Still open: formats 550/554 (BGRA10_XR, 19 draws), 2 programs with color_opcodes arrays, the
     fbfetch scratch reuse (lock clock text), the user asked for an iOS upgrade after stabilising.
 - **`skyios-shim/out/shim-boot-skyios-gpu.img`** (2026-11-20 12:40): daily cmdline (no auto

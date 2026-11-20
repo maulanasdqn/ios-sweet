@@ -1,0 +1,42 @@
+From: SkyIOS
+Subject: [PATCH] sweet: touch watchdog logs PID/head/INT, re-inits SE7 if the PID is unreadable, acks after reset
+
+--- a/bsd/dev/sweet_touch.c
++++ b/bsd/dev/sweet_touch.c
+@@ -646,14 +646,34 @@
+ 			quiet = 0;
+ 			quiet_limit = 300;
+ 		} else if (!st.active && ++quiet == quiet_limit) {
+-			printf("SWEET TOUCH: no frame for %u s; resetting the IC (%u so far, %u frames)\n",
+-			    quiet_limit / 100u, ++resets, st.frames);
++			/* what is stuck: the IC (PID still "9896") or the I2C controller? */
++			uint8_t pid[8] = {0}, head[8] = {0};
++			int pe = touch_read(0x5d, GOODIX_PID_REG, true, pid, sizeof(pid));
++			int he = touch_read(0x5d, GOODIX_EVENT_REG, true, head, sizeof(head));
++			printf("SWEET TOUCH: no frame for %u s; resetting the IC (%u so far, %u frames); "
++			    "pid err=%d %02x%02x%02x%02x head err=%d %02x %02x %02x %02x %02x %02x %02x %02x "
++			    "int=%u se status=%#x\n",
++			    quiet_limit / 100u, ++resets, st.frames, pe, pid[0], pid[1], pid[2], pid[3],
++			    he, head[0], head[1], head[2], head[3], head[4], head[5], head[6], head[7],
++			    touch_rd(st.gpio, TOUCH_GPIO_IO(9)) & 1u, touch_rd(st.se, SE_STATUS));
+ 			quiet = 0;
+ 			quiet_limit = 3000;
++			if (pe || pid[0] != '9' || pid[1] != '8') {
++				/* the controller rather than the IC: start it again */
++				touch_abort();
++				if (!st.dead && !touch_se_init()) {
++					printf("SWEET TOUCH: SE7 re-init failed\n");
++				}
++			}
+ 			touch_gpio(8, 0, 3, 3, true, false);
+ 			touch_wait(2);
+ 			touch_gpio(8, 0, 3, 3, true, true);
+ 			touch_wait(300);
++			/* an event the IC still waits to have acknowledged blocks new ones */
++			int ae = touch_goodix_ack();
++			pe = touch_read(0x5d, GOODIX_PID_REG, true, pid, sizeof(pid));
++			printf("SWEET TOUCH: after reset: ack err=%d pid err=%d %02x%02x%02x%02x int=%u\n",
++			    ae, pe, pid[0], pid[1], pid[2], pid[3], touch_rd(st.gpio, TOUCH_GPIO_IO(9)) & 1u);
+ 		}
+ 		if ((++st.polls % 1000u) == 0) {
+ 			printf("SWEET TOUCH: %u polls, %u frames, %u errors, head %#x, active %#x\n",
