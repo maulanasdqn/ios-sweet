@@ -2,6 +2,41 @@
 
 ## Agent handoff / active work (2026-11-19, latest; session 15 ended ~03:00 WIB)
 
+### >>> HANDOFF 2026-11-20 (session 17): CoreAnimation on the GPU with compiled shaders <<<
+
+**Observed (probe90, 2026-11-20 09:52):** backboardd renders the lock screen and the
+whole home screen (icons, labels, dock, Search pill) through the Adreno 618, with
+CoreAnimation's own shaders compiled offline; no hang, no wait failures, 0-13 skipped
+draws per boot. The output matches the software-CA screenshots (the black wallpaper is
+black in software CA too; the left circle is AssistiveTouch). `logs/shot-probe90-*.png`.
+
+**Shader pipeline (tools/air-spec, commit 56cd3ac):** `airspec.py -O ca.ll:FUNC 'consts'`
+specialises one QuartzCore metallib function (research/root/qc/ca.ll = metal-objdump of
+default.metallib) for a function-constant set with the Metal toolchain's air-opt;
+`air2glsl.py` translates the specialised AIR to GLSL; glslangValidator -> SPIR-V;
+`skyprog` (mesa ir3 + port of gallium fd6_program.cc VS+FS state, built in docker image
+skyios-mesadev via build-skyprog.sh, run in skyios-ir3c) emits ir3 code + a6xx program
+registers + constant layout; `genprogs.py ca.ll skyios-metal/progs/keys.txt
+skyios-metal/bundle/SkyPrograms.h` builds the table (51 of 53 seen pipelines; missing:
+display_overdrive_lut_gen (3D texture), inplace_copy (texture write)). Keys come from the
+driver log (`rec pipeline ...`, `rec noprog ...` for missing ones; constants sorted).
+Facts found: CA vertex buffer = Metal buffer 1, stride 48 (float4 pos, float2 tc0/tc1,
+half4 color); MVP = buffer 2; images at fragment texture 3+; blend_function 54 = no
+shader blend (hardware blend from the pipeline); dest_count/blend 46/luma_boost read the
+framebuffer -> emulated by a 2D-engine copy of the target (SkyRender.m fbCopy).
+
+**Kernel slots:** SkyAdrenoAccel had 64 buffer slots per client; imports ran out (probe88/89
+skipped most textured draws). Now 320 (0109 patch updated; kernel for probe90/91 =
+ci-clean2 with SkyAdrenoAccel.cpp/SweetFramebuffer.cpp recompiled by the flags line of
+localbuild/build60.log (path dxb->ci-clean2) and relinked with ci-clean2/build.log line
+3579660; stripped kernels in the session scratchpad k90/k91).
+
+**Frame rate (observed):** 10.4 swaps/s in both software and GPU CA, while the vsync
+timer runs at 60 Hz. backboardd never calls our notification selector 72, so it gets no
+vsync. probe91 logs which selectors register async callbacks (`SWEET FB: ... async sel`).
+Next: deliver vsync/swap-complete on that selector -> 60 fps; then cut per-draw cost
+(full state + wfi per draw, flushAll of every imported surface per submit).
+
 ### >>> HANDOFF 2026-11-19 (session 15): clean local build, probe66 <<<
 
 **Probes 54-65 are unreliable** (previous session, not recorded here before):
