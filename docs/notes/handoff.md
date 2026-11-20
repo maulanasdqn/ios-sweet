@@ -55,6 +55,20 @@ localbuild/build60.log (path dxb->ci-clean2) and relinked with ci-clean2/build.l
   problem:** why reused scratch memory loses the lock text (offscreen targets of other sizes?
   stale TP cache?). Code is back to the probe104 scratch (fresh per command buffer, correct,
   ~52 fps).
+- **Lead from HakiOS (oosexgang/hakios-xnu-kernel, docs/reference/metal.md, hakios-metal/src
+  render.cpp:1586-1612, MIT):** their sysmem framebuffer-fetch barrier is WFI, PC_CCU_FLUSH_COLOR_TS
+  **waited for with CP_WAIT_REG_MEM**, CACHE_INVALIDATE, WFI. fbCopy fired the flush events without
+  waiting (a WFI does not wait for them). Guess: the fetch read the reused scratch before the copy
+  reached memory. Uncommitted-to-device change (this session): `ccu_flush_wait()` around the copy +
+  scratch shared by all frames again -> image `shim-boot-probe111.img` (k109, probe109 cmdline,
+  sweetshot_crop=1), **not booted yet** (phone was on the daily image). Check: lock clock text
+  present + ~60 swaps/s => fixed; text missing => revert fbCopy's scratch to per command buffer.
+- skyprog: ir3 gives a sampler prefetch the texture index as its sampler; ported HakiOS's
+  fixPrefetchSamplers (commit 7e9a730). Only display_overdrive_srgb_sampler changed (tex1 was read
+  through the linear sampler instead of nearest). Their other finding (dsx.f16 returns the y
+  derivative) does not apply here: air2glsl emits half as 32-bit float.
+- Pixelation report (user: app open/close, app switcher, blur, static text/icons): not reproduced;
+  probe109/110 full-res crops are sharp. Needs a photo from the user.
 - **`skyios-shim/out/shim-boot-skyios-gpu.img`** (2026-11-20 12:40): daily cmdline (no auto
   reboot, no sims) + `sweetmetal_procs=skyios-accel-test,backboardd` + kernel k93 + bundle of
   commit d668d2f: CoreAnimation on the GPU for normal use. Booted and left running.

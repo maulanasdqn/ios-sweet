@@ -61,6 +61,22 @@ static void event_ts(NSMutableData *s, uint32_t ev, uint64_t a, uint32_t v) {
 static void wfi(NSMutableData *s) {
     emit(s, pkt7(0x26, 0));
 }
+// PC_CCU_FLUSH_COLOR_TS and a CP_WAIT_REG_MEM until its timestamp lands: the
+// event is asynchronous and a WFI does not wait for it (turnip and HakiOS's
+// sysmem framebuffer-fetch barrier wait the same way). A fresh value each time
+// so that an earlier flush's word does not satisfy the wait.
+static void ccu_flush_wait(NSMutableData *s, uint64_t ts) {
+    static _Atomic uint32_t seq;
+    uint32_t v = ++seq;
+    event_ts(s, 0x1d, ts, v);
+    emit(s, pkt7(0x3c, 6));     // CP_WAIT_REG_MEM
+    emit(s, 0x3 | (1 << 4));    // WRITE_EQ, POLL_MEMORY
+    emit(s, (uint32_t)ts);
+    emit(s, (uint32_t)(ts >> 32));
+    emit(s, v);
+    emit(s, ~0u);
+    emit(s, 16);                // delay loop cycles
+}
 static uint32_t fbits(float f) {
     uint32_t u;
     memcpy(&u, &f, 4);
@@ -838,32 +854,31 @@ static void load_ubos(NSMutableData *s, uint32_t op, uint32_t sb, const SkyProgU
 // engine into memory freed with the command buffer (sampling the attachment
 // while drawing into it hung the GPU, probe84/85)
 - (uint64_t)fbCopy {
-    // one scratch per command buffer and size, fresh (zero) memory each time.
-    // Reusing scratch memory (shared by all frames, probe100/107, or through
-    // the pool, probe103) loses the lock screen's clock text although the copy
-    // works (a zeroed scratch without the copy gives a black screen, probe106,
-    // and a full 2D scissor did not help, probe107): unexplained. Costs ~5 ms
-    // of CPU per command buffer (allocation), the gap to 60 fps.
-    static const char key;
-    NSMutableDictionary<NSNumber *, SkyUpload *> *scratch = objc_getAssociatedObject(_owner, &key);
-    if (!scratch) {
-        scratch = [NSMutableDictionary dictionary];
-        objc_setAssociatedObject(_owner, &key, scratch, OBJC_ASSOCIATION_RETAIN);
-    }
+    // one scratch per size, shared by all frames (the GPU runs command
+    // buffers in order). Reused scratch lost the lock screen's clock text
+    // (probe100/103/107) while the CCU flushes around the copy were not
+    // waited for: the fetch read the scratch before the copy reached memory.
+    // Fresh memory per command buffer hid it at ~5 ms of CPU a frame.
+    static NSMutableDictionary<NSNumber *, SkyUpload *> *scratch;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ scratch = [NSMutableDictionary dictionary]; });
     size_t size = ((size_t)_rt.bpr * _h + 4095) & ~(size_t)4095;
-    SkyUpload *up = scratch[@(size)];
-    if (!up) {
-        up = [SkyUpload new];
-        if (!sky_alloc(size, &up->mem))
-            return 0;
-        scratch[@(size)] = up;
+    SkyUpload *up;
+    @synchronized(scratch) {
+        up = scratch[@(size)];
+        if (!up) {
+            up = [SkyUpload new];
+            if (!sky_alloc(size, &up->mem))
+                return 0;
+            scratch[@(size)] = up;
+        }
     }
     const SkyMem *u = &up->mem;
     NSMutableData *s = _s;
     uint64_t ts = sky_code.iova + CODE_TS;
     wfi(s);
-    event_ts(s, 0x1d, ts, 0x20); // PC_CCU_FLUSH_COLOR_TS: draws so far reach memory
-    event(s, 0x19);              // PC_CCU_INVALIDATE_COLOR
+    ccu_flush_wait(s, ts); // draws so far reach memory
+    event(s, 0x19);        // PC_CCU_INVALIDATE_COLOR
     wfi(s);
     uint32_t fmt = FMT6_8_8_8_8_UNORM, blt = (fmt << 8) | (0xf << 20);
     reg1(s, 0x8c00, blt);                       // RB_A2D_BLT_CNTL
@@ -889,7 +904,7 @@ static void load_ubos(NSMutableData *s, uint32_t op, uint32_t sb, const SkyProgU
     emit(s, pkt7(0x2c, 1)); // CP_BLIT
     emit(s, 3);
     wfi(s);
-    event_ts(s, 0x1d, ts, 0x21);
+    ccu_flush_wait(s, ts); // the copy reaches memory
     event(s, 0x19);
     event(s, 0x31); // CACHE_INVALIDATE: the texture cache sees the copy
     wfi(s);
