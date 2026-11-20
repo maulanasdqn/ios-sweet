@@ -330,6 +330,21 @@ static BOOL import_surface(IOSurfaceRef s, SkyImport *out) {
     return YES;
 }
 
+// imported surfaces a command buffer uses: the kernel flushes only these
+// from the CPU caches on submit (selector 7, SkyObjects.m)
+static const char sky_surface_key;
+static void note_surface(id owner, const SkyImport *im) {
+    NSMutableSet<NSNumber *> *set = objc_getAssociatedObject(owner, &sky_surface_key);
+    if (!set) {
+        set = [NSMutableSet set];
+        objc_setAssociatedObject(owner, &sky_surface_key, set, OBJC_ASSOCIATION_RETAIN);
+    }
+    [set addObject:@(im->handle)];
+}
+NSSet<NSNumber *> *sky_surfaces_of(id owner) {
+    return objc_getAssociatedObject(owner, &sky_surface_key);
+}
+
 // per-command-buffer upload memory for setVertexBytes, freed with it
 @interface SkyUpload : NSObject {
 @public
@@ -740,6 +755,7 @@ static void load_ubos(NSMutableData *s, uint32_t op, uint32_t sb, const SkyProgU
         SkyImport im;
         if (!import_surface(surf, &im))
             return NO;
+        note_surface(_owner, &im);
         base = im.iova + im.offset;
         bpr = im.bpr;
         if (bpr & 63) {
@@ -1586,6 +1602,8 @@ id sky_draw_encoder(id<MTLDevice> dev, MTLRenderPassDescriptor *d, NSMutableData
     SkyImport rt = {0};
     BOOL cr = code_ready();
     BOOL imp = cr && surf && import_surface(surf, &rt);
+    if (imp)
+        note_surface(owner, &rt);
     if (!surf || !fmt_ok || !cr || !imp || (rt.bpr & 63)) {
         static int n;
         if (n++ < 40)

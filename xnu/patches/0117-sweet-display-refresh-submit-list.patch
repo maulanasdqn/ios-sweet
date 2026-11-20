@@ -1,0 +1,137 @@
+From: SkyIOS
+Subject: [PATCH] sweet: IOMFBDisplayRefresh property, accel submit flushing listed surfaces
+
+QuartzCore paces CoreAnimation from IOMFBDisplayRefresh (displayMinRefreshInterval,
+displayRefreshStepMachTime, mach time): without it backboardd ran at ~10 frames/s.
+SkyAdrenoAccel selector 7 submits flushing the allocations plus only the imported
+surfaces the client lists, instead of every imported surface on each submit and wait.
+
+--- a/iokit/Kernel/arm/SkyAdrenoAccel.cpp
++++ b/iokit/Kernel/arm/SkyAdrenoAccel.cpp
+@@ -133,6 +133,7 @@
+ 	task_t fTask;
+ 	IOLock *fLock;
+ 	SkyBuf fBufs[SKY_MAX_BUFS];
++	bool fListMode; /* client names the surfaces a submit uses (selector 7) */
+ 
+ 	IOReturn alloc(uint64_t size, uint64_t *out);
+ 	IOReturn release(uint64_t handle);
+@@ -140,6 +141,7 @@
+ 	IOReturn wait(uint64_t seq, uint64_t ms, uint64_t *status);
+ 	IOReturn import(uint64_t surfaceID, uint64_t *out);
+ 	void flushAll(void);
++	void flushList(const uint64_t *handles, uint32_t n);
+ 
+ public:
+ 	bool initWithTask(task_t owningTask, void *securityID, UInt32 type) APPLE_KEXT_OVERRIDE;
+@@ -168,6 +170,7 @@
+ 	fTask = owningTask;
+ 	fLock = IOLockAlloc();
+ 	bzero(fBufs, sizeof(fBufs));
++	fListMode = false;
+ 	return fLock != NULL;
+ }
+ 
+@@ -341,13 +344,35 @@
+ 	if ((off & 3) != 0 || dwords == 0 || off >= b->size || dwords > (b->size - off) / 4) {
+ 		return kIOReturnBadArgument;
+ 	}
+-	flushAll();
++	if (!fListMode) {
++		flushAll();
++	}
+ 	uint32_t s = sweet_rs_gpu_user_submit(b->iova + off, (uint32_t)dwords);
+ 	if (s == 0) {
+ 		return kIOReturnIOError;
+ 	}
+ 	*seq = s;
+ 	return kIOReturnSuccess;
++}
++
++void
++SkyAdrenoAccelClient::flushList(const uint64_t *handles, uint32_t n)
++{
++	for (uint32_t i = 0; i < SKY_MAX_BUFS; i++) {
++		if (fBufs[i].md != NULL) {
++			sweet_rs_cache_flush((uintptr_t)fBufs[i].md->getBytesNoCopy(), fBufs[i].size);
++		}
++	}
++	for (uint32_t k = 0; handles != NULL && k < n; k++) {
++		uint64_t h = handles[k];
++		if (h == 0 || h > SKY_MAX_BUFS || fBufs[h - 1].surf == NULL) {
++			continue;
++		}
++		uintptr_t va = fBufs[h - 1].surf->kernelAddress();
++		if (va != 0) {
++			sweet_rs_cache_flush(va, fBufs[h - 1].surf->memory->getLength());
++		}
++	}
+ }
+ 
+ void
+@@ -374,9 +399,11 @@
+ 		int32_t r = sweet_rs_gpu_user_done((uint32_t)seq);
+ 		if (r != 0) {
+ 			*status = r > 0 ? 0 : 2;
+-			IOLockLock(fLock);
+-			flushAll();
+-			IOLockUnlock(fLock);
++			if (!fListMode) {
++				IOLockLock(fLock);
++				flushAll();
++				IOLockUnlock(fLock);
++			}
+ 			return kIOReturnSuccess;
+ 		}
+ 		now = mach_absolute_time();
+@@ -405,7 +432,7 @@
+ {
+ 	static const struct {
+ 		uint32_t in, out;
+-	} shape[] = { { 0, 3 }, { 1, 3 }, { 1, 0 }, { 3, 1 }, { 2, 1 }, { 0, 0 }, { 1, 4 } };
++	} shape[] = { { 0, 3 }, { 1, 3 }, { 1, 0 }, { 3, 1 }, { 2, 1 }, { 0, 0 }, { 1, 4 }, { 3, 1 } };
+ 	if (selector >= sizeof(shape) / sizeof(shape[0]) ||
+ 	    args->scalarInputCount != shape[selector].in || args->scalarOutputCount != shape[selector].out) {
+ 		return kIOReturnBadArgument;
+@@ -436,6 +463,15 @@
+ 	case 6:
+ 		ret = import(in[0], out);
+ 		break;
++	case 7:
++		/* submit, flushing the allocations and only the imported surfaces
++		 * listed in the structure input (flushAll cleaned every imported
++		 * surface, several full-screen ones, on each submit and wait) */
++		fListMode = true;
++		flushList((const uint64_t *)args->structureInput, args->structureInput != NULL ?
++		    (uint32_t)(args->structureInputSize / sizeof(uint64_t)) : 0);
++		ret = submit(in[0], in[1], in[2], out);
++		break;
+ 	case 5: {
+ 		char text[160];
+ 		uint32_t n = args->structureInputSize < sizeof(text) - 1 ? args->structureInputSize : sizeof(text) - 1;
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -208,6 +208,23 @@
+ 
+ 	setProperty(kIOUserClientClassKey, "IOMobileFramebufferUserClient");
+ 	setProperty("external", false);
++	{
++		/* QuartzCore reads the display's refresh timing from here (mach time
++		 * units); without it CoreAnimation paced itself at ~10 frames/s */
++		uint64_t frame = 0;
++		nanoseconds_to_absolutetime((uint64_t)SWEET_FB_VSYNC_US * 1000, &frame);
++		OSDictionary *refresh = OSDictionary::withCapacity(2);
++		OSNumber *mn = OSNumber::withNumber(frame, 64);
++		OSNumber *st = OSNumber::withNumber(frame, 64);
++		if (refresh != NULL && mn != NULL && st != NULL) {
++			refresh->setObject("displayMinRefreshInterval", mn);
++			refresh->setObject("displayRefreshStepMachTime", st);
++			setProperty("IOMFBDisplayRefresh", refresh);
++		}
++		OSSafeReleaseNULL(mn);
++		OSSafeReleaseNULL(st);
++		OSSafeReleaseNULL(refresh);
++	}
+ 	setProperty("DisplayPipePlaneBaseAlignment", 64ULL, 32);
+ 	registerService();
+ 	IOLog("SWEET FB: AppleCLCD %ux%u stride %u at 0x%llx, default surface %u, presented as %ux%u\n",

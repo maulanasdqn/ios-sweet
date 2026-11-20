@@ -477,25 +477,30 @@ static uint32_t pkt7(uint32_t op, uint32_t cnt) {
     memcpy(_ib.cpu, _s->data.bytes, _s->data.length);
     uint64_t in[3] = {_ib.handle, 0, dw}, seq = 0;
     uint32_t n = 1;
-    if (IOConnectCallScalarMethod(sky_conn, SKY_SUBMIT, in, 3, &seq, &n) != KERN_SUCCESS) {
+    // selector 7: submit flushing only the surfaces this buffer uses (kernels
+    // without it answer kIOReturnBadArgument: flush-everything submit)
+    extern NSSet<NSNumber *> *sky_surfaces_of(id owner);
+    static BOOL no_list;
+    kern_return_t kr = KERN_FAILURE;
+    if (!no_list) {
+        NSSet<NSNumber *> *used = sky_surfaces_of(self);
+        uint64_t handles[256];
+        size_t nh = 0;
+        for (NSNumber *h in used)
+            if (nh < 256)
+                handles[nh++] = h.unsignedLongLongValue;
+        kr = IOConnectCallMethod(sky_conn, 7, in, 3, handles, nh * 8, &seq, &n, NULL, NULL);
+        if (kr != KERN_SUCCESS) {
+            no_list = YES;
+            sky_log("submit list: %#x, falling back", kr);
+        }
+    }
+    if (kr != KERN_SUCCESS && IOConnectCallScalarMethod(sky_conn, SKY_SUBMIT, in, 3, &seq, &n) != KERN_SUCCESS) {
         _error = [NSError errorWithDomain:MTLCommandBufferErrorDomain code:MTLCommandBufferErrorInternal userInfo:nil];
         [self finish:MTLCommandBufferStatusError];
         return;
     }
     _seq = seq;
-    // debug: dump early IBs so a CP hang (kernel logs ib1 base/rem) can be
-    // matched to the packet it stopped in
-    if (seq >= 48 && seq <= 64) {
-        sky_log("IB %llu: draws up to id %u", seq, sky_draw_id);
-        const uint32_t *w = (const uint32_t *)_s->data.bytes;
-        for (uint32_t i = 0; i < dw; i += 8) {
-            char line[160];
-            int o = snprintf(line, sizeof(line), "IB %llu %#llx+%04x:", seq, _ib.iova, i * 4);
-            for (uint32_t j = i; j < i + 8 && j < dw && o < (int)sizeof(line) - 10; j++)
-                o += snprintf(line + o, sizeof(line) - o, " %08x", w[j]);
-            sky_log("%s", line);
-        }
-    }
     _status = MTLCommandBufferStatusScheduled;
     for (MTLCommandBufferHandler h in _scheduled)
         h(self);
