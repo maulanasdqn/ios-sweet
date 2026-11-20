@@ -858,24 +858,26 @@ static void load_ubos(NSMutableData *s, uint32_t op, uint32_t sb, const SkyProgU
 // engine into memory freed with the command buffer (sampling the attachment
 // while drawing into it hung the GPU, probe84/85)
 - (uint64_t)fbCopy {
-    // one scratch per size, shared by all frames (the GPU runs command
-    // buffers in order). Reused scratch lost the lock screen's clock text
-    // (probe100/103/107) while the CCU flushes around the copy were not
-    // waited for: the fetch read the scratch before the copy reached memory.
-    // Fresh memory per command buffer hid it at ~5 ms of CPU a frame.
-    static NSMutableDictionary<NSNumber *, SkyUpload *> *scratch;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ scratch = [NSMutableDictionary dictionary]; });
+    // one scratch per command buffer and size, fresh (zero) memory each time.
+    // Reusing scratch memory (shared by all frames, probe100/107/111a, or
+    // through the pool, probe103) loses the lock screen's clock text although
+    // the copy works (a zeroed scratch without the copy gives a black screen,
+    // probe106); neither a full 2D scissor (probe107) nor waiting for the CCU
+    // flushes (probe111a) helped: unexplained. Costs ~5 ms of CPU per command
+    // buffer (allocation), the gap to 60 fps.
+    static const char key;
+    NSMutableDictionary<NSNumber *, SkyUpload *> *scratch = objc_getAssociatedObject(_owner, &key);
+    if (!scratch) {
+        scratch = [NSMutableDictionary dictionary];
+        objc_setAssociatedObject(_owner, &key, scratch, OBJC_ASSOCIATION_RETAIN);
+    }
     size_t size = ((size_t)_rt.bpr * _h + 4095) & ~(size_t)4095;
-    SkyUpload *up;
-    @synchronized(scratch) {
-        up = scratch[@(size)];
-        if (!up) {
-            up = [SkyUpload new];
-            if (!sky_alloc(size, &up->mem))
-                return 0;
-            scratch[@(size)] = up;
-        }
+    SkyUpload *up = scratch[@(size)];
+    if (!up) {
+        up = [SkyUpload new];
+        if (!sky_alloc(size, &up->mem))
+            return 0;
+        scratch[@(size)] = up;
     }
     const SkyMem *u = &up->mem;
     NSMutableData *s = _s;
